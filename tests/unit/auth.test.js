@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { CREDENTIALS_ERROR, NETWORK_ERROR, describeAuthError, normalizeEmail } from "../../src/data/auth.js";
+import {
+  CREDENTIALS_ERROR,
+  NETWORK_ERROR,
+  describeAuthDetail,
+  describeAuthError,
+  normalizeEmail
+} from "../../src/data/auth.js";
 
 describe("normalizeEmail", () => {
   it("trims whitespace from a pasted address", () => {
@@ -67,5 +73,27 @@ describe("describeAuthError", () => {
   it("falls back to something readable for an unknown failure", () => {
     expect(describeAuthError({ message: "Something odd happened" })).toMatch(/something odd happened/i);
     expect(describeAuthError(null)).toMatch(/sign in failed/i);
+  });
+});
+
+describe("describeAuthDetail", () => {
+  it("keeps Supabase's own words and the code beside them", () => {
+    expect(describeAuthDetail({ message: "Invalid login credentials", code: "invalid_grant", status: 400 })).toBe(
+      "Invalid login credentials (invalid_grant, 400)"
+    );
+  });
+
+  it("works when only a message arrives", () => {
+    expect(describeAuthDetail({ message: "Email not confirmed" })).toBe("Email not confirmed");
+  });
+
+  it("works when only a code arrives", () => {
+    expect(describeAuthDetail({ error_code: "over_email_send_rate_limit" })).toBe("over_email_send_rate_limit");
+  });
+
+  it("stays empty rather than printing the word undefined", () => {
+    expect(describeAuthDetail(null)).toBe("");
+    expect(describeAuthDetail(undefined)).toBe("");
+    expect(describeAuthDetail({})).toBe("");
   });
 });

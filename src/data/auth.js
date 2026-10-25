@@ -39,6 +39,22 @@ const AUTH_ERRORS = {
   too_many_requests: "Too many attempts. Wait a minute and try again."
 };
 
+/**
+ * The unvarnished answer from Supabase, for the line under the message:
+ * `Invalid login credentials (invalid_grant, 400)`. Nothing is hidden, because
+ * when a sign-in is refused the code is the only thing that says why.
+ */
+export function describeAuthDetail(error) {
+  if (!error) return "";
+  const message = String(error.message || error.error_description || error.msg || "").trim();
+  const code = String(error.code || error.error_code || "").trim();
+  const status = Number(error.status) || 0;
+
+  const meta = [code, status ? String(status) : ""].filter(Boolean).join(", ");
+  if (message && meta) return `${message} (${meta})`;
+  return message || meta;
+}
+
 /** Map a Supabase auth error to the sentence the merchant should read. */
 export function describeAuthError(error) {
   if (!error) return "Sign in failed. Please try again.";
@@ -66,17 +82,20 @@ export async function signInWithPassword(email, password) {
   });
 
   if (error) {
-    // Kept in the console on purpose: the exact Supabase code is the quickest
-    // way to tell a wrong password from an address that was never confirmed
-    // (Dashboard → Authentication → Users shows the Confirmed column).
-    console.warn(
-      "[auth] sign-in refused:",
-      error.code || error.error_code || error.status || "unknown",
-      error.message || ""
+    // The exact Supabase answer, in full. `invalid_credentials` means the
+    // address/password *pair* was refused — it is the only code that can tell
+    // you the account was never confirmed, has no password identity, or lives
+    // in a different project than the one those keys belong to.
+    console.error(
+      "Supabase Auth Error:",
+      error.message || error.error_description || error.code || "unknown"
     );
-    return { ok: false, error: describeAuthError(error) };
+    console.error("[auth] detail:", describeAuthDetail(error), "| code:", error.code || error.error_code || "none");
+
+    return { ok: false, error: describeAuthError(error), detail: describeAuthDetail(error), code: error.code || error.error_code || "" };
   }
 
+  console.log("Login successful!", data.user && data.user.email);
   return { ok: true, session: data.session, user: data.user };
 }
 

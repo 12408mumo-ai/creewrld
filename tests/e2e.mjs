@@ -155,9 +155,10 @@ async function launch() {
 /** Fresh page with network + console instrumentation and a stubbed window.open. */
 async function openPage(browser) {
   const page = await browser.newPage();
-  const errors = { console: [], page: [], requests: [] };
+  const errors = { console: [], page: [], requests: [], logged: [] };
 
   page.on("console", (message) => {
+    errors.logged.push(message.text());
     if (message.type() === "error") errors.console.push(message.text());
   });
   page.on("pageerror", (error) => errors.page.push(error.message));
@@ -587,10 +588,20 @@ async function run() {
     await wait(700);
     ok("wrong password is rejected by Supabase Auth", await isVisible(page, "#loginError"));
     ok(
+      "the console reports what was sent",
+      errors.logged.some((line) => /Attempting login for: owner@creewrld\.test$/.test(line)),
+      errors.logged.filter((line) => /Attempting login/.test(line)).join(" | ")
+    );
+    ok(
+      "the console reports what Supabase answered",
+      errors.logged.some((line) => /Supabase Auth Error: Invalid login credentials/.test(line)),
+      errors.logged.filter((line) => /Supabase Auth Error/.test(line)).join(" | ")
+    );
+    ok(
       "the refusal is the Gmail/password sentence",
-      (await text(page, "#loginError")) ===
+      (await text(page, "#loginErrorText")) ===
         "Invalid Gmail or password. Please verify your credentials or confirm the account in the Supabase Dashboard.",
-      await text(page, "#loginError")
+      await text(page, "#loginErrorText")
     );
     ok(
       "the button returns to its resting label",
@@ -604,6 +615,20 @@ async function run() {
           window.getComputedStyle(node).borderLeftWidth !== "0px";
       })) === true
     );
+    ok(
+      "Supabase's own reason is shown underneath",
+      /invalid login credentials/i.test((await text(page, "#loginErrorDetail")) || ""),
+      await text(page, "#loginErrorDetail")
+    );
+
+    // Typing a new password dismisses the last refusal without a submit.
+    await page.evaluate(() => {
+      const pass = document.querySelector("#lfPass");
+      pass.value = "c";
+      pass.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    ok("typing a new password clears the refusal", (await isVisible(page, "#loginError")) === false);
+    ok("the detail line goes with it", (await isVisible(page, "#loginErrorDetail")) === false);
 
     const attempt = stub
       .calls()
@@ -631,19 +656,23 @@ async function run() {
     await wait(600);
     ok(
       "an unconfirmed account gets the same refusal",
-      (await text(page, "#loginError")) ===
+      (await text(page, "#loginErrorText")) ===
         "Invalid Gmail or password. Please verify your credentials or confirm the account in the Supabase Dashboard.",
-      await text(page, "#loginError")
+      await text(page, "#loginErrorText")
     );
 
     // Submitting again must clear the previous message, not stack next to it.
-    await fill(page, "#lfEmail", "OWNER@creewrld.TEST");
-    await fill(page, "#lfPass", "creewrld");
+    // Values are set without firing `input`, so the panel is still showing the
+    // unconfirmed-account refusal when the submit runs.
     const cleared = await page.evaluate(() => {
-      const form = document.querySelector("#loginForm");
-      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      document.querySelector("#lfEmail").value = "  OWNER@creewrld.TEST  ";
+      document.querySelector("#lfPass").value = "  creewrld  ";
+      document.querySelector("#loginForm").dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true })
+      );
       const node = document.querySelector("#loginError");
-      return { text: node.textContent, hidden: node.hidden };
+      const text = document.querySelector("#loginErrorText");
+      return { text: text.textContent, hidden: node.hidden };
     });
     ok("a new attempt clears the previous error text", cleared.text === "", cleared.text);
     ok("a new attempt hides the previous error", cleared.hidden === true);
@@ -656,6 +685,21 @@ async function run() {
     ok(
       "sign-in went through the password grant",
       stub.calls().some((call) => call.path === "/auth/v1/token" && /grant_type=password/.test(call.query))
+    );
+
+    const trimmedAttempt = stub
+      .calls()
+      .filter((call) => call.path === "/auth/v1/token" && /grant_type=password/.test(call.query))
+      .pop();
+    ok(
+      "surrounding whitespace is stripped from the password before it is sent",
+      trimmedAttempt && trimmedAttempt.body.password === "creewrld",
+      trimmedAttempt && JSON.stringify(trimmedAttempt.body.password)
+    );
+    ok(
+      "the address is normalised on that same attempt",
+      trimmedAttempt && trimmedAttempt.body.email === "owner@creewrld.test",
+      trimmedAttempt && trimmedAttempt.body.email
     );
     ok("no merchant flag is written to localStorage", (await page.evaluate(() => !localStorage.getItem("creewrld.session.v1"))));
     await wait(300);
