@@ -1,12 +1,10 @@
 /**
  * Asset resolution for product imagery.
  *
- * Product records store *stable* paths ("assets/img/sneaker-mocha.jpg"). Vite
- * fingerprints the real files at build time, so every render resolves the
- * stored path to the emitted URL. That keeps three things working at once:
- *   • localStorage records written by the pre-Vite site,
- *   • merchant-entered relative paths and external URLs,
- *   • cache-busted, hashed filenames in production.
+ * A product's image_url may be a bundled path ("assets/img/sneaker-mocha.jpg"),
+ * a Supabase Storage public URL, or any external https:// URL. Vite fingerprints
+ * the bundled files at build time, so every render resolves a bundled path to
+ * the emitted URL — which keeps all three kinds working at once.
  */
 
 const modules = import.meta.glob("../assets/img/*.jpg", {

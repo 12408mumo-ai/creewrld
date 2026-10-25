@@ -92,7 +92,7 @@
   <span class="merchant__label">Merchant mode</span>
   <span class="merchant__sep" aria-hidden="true"></span>
   <button type="button" class="merchant__btn" id="merchantAdd">+ New product</button>
-  <button type="button" class="merchant__btn" id="merchantReset">Reset catalogue</button>
+  <button type="button" class="merchant__btn" id="merchantSeed" hidden>Load starter catalogue</button>
   <button type="button" class="merchant__btn merchant__btn--out" id="merchantLogout">Sign out</button>
 </div>
 
@@ -177,14 +177,16 @@
       <div class="filters__rail" id="filters" role="tablist" aria-label="Categories">
         <!-- rendered by JS -->
       </div>
-      <p class="filters__count" id="resultCount" aria-live="polite">10 pieces</p>
+      <p class="filters__count" id="resultCount" aria-live="polite">—</p>
     </div>
+
+    <p class="data-notice" id="dataNotice" role="status" hidden></p>
 
     <div class="grid" id="productGrid" aria-live="polite" aria-busy="false"></div>
 
     <div class="empty" id="emptyState" hidden>
       <p class="empty__kicker">Nothing here yet</p>
-      <p class="empty__text">No pieces land in this category right now. New drops arrive weekly — check back soon, or message the studio on WhatsApp.</p>
+      <p class="empty__text" id="emptyText">No pieces land in this category right now. New drops arrive weekly — check back soon, or message the studio on WhatsApp.</p>
       <a class="btn btn--primary" href="https://wa.me/254719526649" target="_blank" rel="noopener">Message the studio</a>
     </div>
   </section>
@@ -423,18 +425,21 @@
 
     <form class="form" id="loginForm" novalidate>
       <div class="field">
-        <label for="lfUser">Username</label>
-        <input id="lfUser" name="username" type="text" autocomplete="username" placeholder="admin" required />
+        <label for="lfEmail">Studio email</label>
+        <input id="lfEmail" name="email" type="email" autocomplete="username" inputmode="email"
+          spellcheck="false" placeholder="you@creewrld.co.ke" required />
       </div>
       <div class="field">
         <label for="lfPass">Password</label>
-        <input id="lfPass" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required />
+        <input id="lfPass" name="password" type="password" autocomplete="current-password"
+          placeholder="••••••••" required />
       </div>
       <p class="field__err" id="loginError" role="alert" hidden></p>
-      <button type="submit" class="btn btn--primary btn--wide">Enter studio</button>
+      <button type="submit" class="btn btn--primary btn--wide" id="loginSubmit">Enter studio</button>
       <p class="form__fine">
-        Demo credentials — <code>admin</code> / <code>creewrld</code>. Access is client-side only;
-        connect a real backend before taking live payments or exposing inventory admin publicly.
+        Access runs through <strong>Supabase Auth</strong>. Only an account the studio has
+        invited can add, edit or delete pieces — the database enforces that on the server,
+        not in this page.
       </p>
     </form>
   </div>
@@ -451,7 +456,7 @@
     <div class="modal__head">
       <p class="modal__kicker">Merchant tools</p>
       <h2 class="modal__title" id="productTitle">Add a <em>piece</em></h2>
-      <p class="modal__sub" id="productSub">Published instantly to the live grid and saved to this browser.</p>
+      <p class="modal__sub" id="productSub">Publishing adds this piece to the live catalogue immediately.</p>
     </div>
 
     <form class="form form--grid" id="productForm" novalidate>
@@ -500,9 +505,16 @@
         <p class="field__err" data-err="sizes" hidden></p>
       </div>
 
+      <div class="field field--full field--upload">
+        <label for="pfFile" id="pfFileLabel">Upload image</label>
+        <input id="pfFile" name="file" type="file" accept="image/jpeg,image/png,image/webp,image/avif" />
+        <p class="field__hint">JPG, PNG, WebP or AVIF, up to 6&nbsp;MB — uploaded to the studio's
+          <code>product-images</code> bucket.</p>
+      </div>
+
       <div class="field field--full">
-        <label for="pfImage">Image URL</label>
-        <input id="pfImage" name="image" type="text" placeholder="https://… or assets/img/piece.jpg" required />
+        <label for="pfImage">…or paste an image URL</label>
+        <input id="pfImage" name="image" type="text" placeholder="https://…" />
         <p class="field__err" data-err="image" hidden></p>
       </div>
 
