@@ -1,10 +1,11 @@
-/* ==========================================================================
-   CREE WRLD — seed catalogue
-   These pieces populate the store on first visit. The merchant can edit,
-   delete or extend the collection from the admin tools; changes persist in
-   localStorage so the storefront stays in sync with the owner's browser.
-   ========================================================================== */
-window.CREE_SEED = [
+/**
+ * Seed catalogue — the ten pieces the store ships with.
+ *
+ * Image paths stay as "assets/img/<file>.jpg"; `resolveImage()` in
+ * lib/images.js maps them to the hashed URLs Vite emits at build time.
+ */
+
+export const SEED = [
   {
     id: "cw-001",
     title: "Mocha Suede High-Top",
@@ -115,4 +116,12 @@ window.CREE_SEED = [
     description:
       "Metallic mesh halter top with a matching low-rise skirt. Lined stretch mesh, no snags or pulls. Clubwear with a 2003 soul — best paired with something plain."
   }
+];
+
+/** Lookbook rotation shown in the hero figure. */
+export const HERO_SLIDES = [
+  { image: "assets/img/sneaker-mocha.jpg", title: "Mocha Suede High-Top" },
+  { image: "assets/img/bomber-varsity.jpg", title: "Varsity Wool Bomber" },
+  { image: "assets/img/blazer-wool.jpg", title: "Charcoal Wool Blazer" },
+  { image: "assets/img/tank-y2k.jpg", title: "Silver Mesh Halter Set" }
 ];

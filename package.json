@@ -1,0 +1,33 @@
+{
+  "name": "cree-wrld",
+  "version": "1.1.0",
+  "description": "CREE WRLD \u2014 obsidian editorial storefront for a Nairobi curated thrift house. Vite single page app.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "npm run test:unit && npm run build && npm run test:e2e",
+    "test:unit": "vitest run",
+    "test:e2e": "node tests/e2e.mjs",
+    "verify": "npm test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/12408mumo-ai/creewrld.git"
+  },
+  "bugs": {
+    "url": "https://github.com/12408mumo-ai/creewrld/issues"
+  },
+  "homepage": "https://github.com/12408mumo-ai/creewrld#readme",
+  "devDependencies": {
+    "axe-core": "^4.14.0",
+    "puppeteer-core": "^25.16.0",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  },
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.19"
+  }
+}

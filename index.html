@@ -10,13 +10,10 @@
 <meta property="og:title" content="CREE WRLD — Curated High-Grade Thrift · Nairobi" />
 <meta property="og:description" content="Selected across Sneakers, Streetwear, Old Money and Y2K. Dispatched directly from Nairobi. Free delivery within Nairobi." />
 <meta property="og:type" content="website" />
-<meta property="og:image" content="assets/img/sneaker-mocha.jpg" />
-<link rel="icon" href="assets/logo/favicon-180.png" />
-<link rel="apple-touch-icon" href="assets/logo/favicon-180.png" />
-<link rel="preload" href="assets/fonts/bodoni-moda-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
-<link rel="preload" href="assets/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
-<link rel="preload" href="assets/fonts/unifrakturcook-gothic.woff2" as="font" type="font/woff2" crossorigin />
-<link rel="stylesheet" href="assets/css/styles.css" />
+<meta property="og:image" content="/assets/logo/creewrld-mark.png" />
+<link rel="icon" href="/assets/logo/favicon-180.png" />
+<link rel="apple-touch-icon" href="/assets/logo/favicon-180.png" />
+<!-- Font preloads and the stylesheet are injected by Vite (hashed filenames). -->
 </head>
 <body>
 
@@ -66,9 +63,9 @@
     <a class="brand" href="#home" aria-label="CREE WRLD — home">
       <span class="brand__stage">
         <span class="brand__spinner" aria-hidden="true">
-          <span class="brand__face brand__face--front"><img src="assets/logo/creewrld-monogram.svg" alt="" width="220" height="182" /></span>
-          <span class="brand__face brand__face--ghost"><img src="assets/logo/creewrld-monogram.svg" alt="" width="220" height="182" /></span>
-          <span class="brand__face brand__face--back"><img src="assets/logo/creewrld-monogram.svg" alt="" width="220" height="182" /></span>
+          <span class="brand__face brand__face--front"><img src="/assets/logo/creewrld-monogram.svg" alt="" width="220" height="182" /></span>
+          <span class="brand__face brand__face--ghost"><img src="/assets/logo/creewrld-monogram.svg" alt="" width="220" height="182" /></span>
+          <span class="brand__face brand__face--back"><img src="/assets/logo/creewrld-monogram.svg" alt="" width="220" height="182" /></span>
         </span>
       </span>
       <span class="brand__word">CREE WRLD</span>
@@ -116,7 +113,7 @@
   <!-- ============ HERO ============ -->
   <section class="hero" id="home">
     <div class="hero__mesh" aria-hidden="true">
-      <span class="hero__mesh-mark"><img src="assets/logo/creewrld-monogram.svg" alt="" /></span>
+      <span class="hero__mesh-mark"><img src="/assets/logo/creewrld-monogram.svg" alt="" /></span>
     </div>
 
     <div class="hero__inner">
@@ -239,7 +236,7 @@
 <footer class="footer">
   <div class="footer__top">
     <div class="footer__brand">
-      <img class="footer__mark" src="assets/logo/creewrld-monogram.svg" alt="CREE WRLD monogram" width="220" height="182" />
+      <img class="footer__mark" src="/assets/logo/creewrld-monogram.svg" alt="CREE WRLD monogram" width="220" height="182" />
       <p class="footer__word">CREE WRLD</p>
       <p class="footer__line">Curated high-grade thrift.<br />Nairobi, Kenya.</p>
     </div>
@@ -553,7 +550,6 @@
 
 <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
-<script src="assets/js/catalog.js" defer></script>
-<script src="assets/js/app.js" defer></script>
+<script type="module" src="/src/main.js"></script>
 </body>
 </html>

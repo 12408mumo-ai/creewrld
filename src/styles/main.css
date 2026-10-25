@@ -6,56 +6,56 @@
 /* ------------------------------ Fonts ----------------------------------- */
 @font-face {
   font-family: "Bodoni Moda";
-  src: url("../fonts/bodoni-moda-latin-wght-normal.woff2") format("woff2-variations");
+  src: url("../assets/fonts/bodoni-moda-latin-wght-normal.woff2") format("woff2-variations");
   font-weight: 400 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Bodoni Moda";
-  src: url("../fonts/bodoni-moda-latin-wght-italic.woff2") format("woff2-variations");
+  src: url("../assets/fonts/bodoni-moda-latin-wght-italic.woff2") format("woff2-variations");
   font-weight: 400 900;
   font-style: italic;
   font-display: swap;
 }
 @font-face {
   font-family: "Playfair Display";
-  src: url("../fonts/playfair-display-latin-wght-normal.woff2") format("woff2-variations");
+  src: url("../assets/fonts/playfair-display-latin-wght-normal.woff2") format("woff2-variations");
   font-weight: 400 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Playfair Display";
-  src: url("../fonts/playfair-display-latin-wght-italic.woff2") format("woff2-variations");
+  src: url("../assets/fonts/playfair-display-latin-wght-italic.woff2") format("woff2-variations");
   font-weight: 400 900;
   font-style: italic;
   font-display: swap;
 }
 @font-face {
   font-family: "Inter";
-  src: url("../fonts/inter-latin-wght-normal.woff2") format("woff2-variations");
+  src: url("../assets/fonts/inter-latin-wght-normal.woff2") format("woff2-variations");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Inter";
-  src: url("../fonts/inter-latin-wght-italic.woff2") format("woff2-variations");
+  src: url("../assets/fonts/inter-latin-wght-italic.woff2") format("woff2-variations");
   font-weight: 100 900;
   font-style: italic;
   font-display: swap;
 }
 @font-face {
   font-family: "JetBrains Mono";
-  src: url("../fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2-variations");
+  src: url("../assets/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2-variations");
   font-weight: 100 800;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "UnifrakturCook";
-  src: url("../fonts/unifrakturcook-gothic.woff2") format("woff2");
+  src: url("../assets/fonts/unifrakturcook-gothic.woff2") format("woff2");
   font-weight: 700;
   font-style: normal;
   font-display: swap;
