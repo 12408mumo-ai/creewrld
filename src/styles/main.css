@@ -1742,6 +1742,19 @@ select option { background: #0b0b0b; color: #fff; }
   color: #e2837b;
 }
 .field__err[hidden] { display: none; }
+/* A refused sign-in deserves more weight than a field hint: it is the whole
+   answer to the form, so it gets a panel instead of a floating line. */
+.field__err--block {
+  display: block;
+  margin-top: 2px;
+  padding: 11px 13px;
+  border-left: 2px solid #8a423b;
+  background: rgba(226, 131, 123, 0.08);
+  font-size: 12px;
+  line-height: 1.55;
+  letter-spacing: 0.04em;
+}
+.field__err--block[hidden] { display: none; }
 .field__hint {
   font-weight: 400;
   font-family: var(--font-mono);

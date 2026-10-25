@@ -556,21 +556,61 @@ async function run() {
     await wait(250);
     ok("login modal opens", await isVisible(page, "#loginModal"));
     ok("login asks for an email, not a username", (await page.evaluate(() => document.querySelector("#lfEmail").type)) === "email");
+    ok(
+      "the field is labelled for Gmail",
+      (await text(page, '#loginModal label[for="lfEmail"]')) === "Studio Gmail",
+      await text(page, '#loginModal label[for="lfEmail"]')
+    );
+    ok(
+      "the placeholder suggests a Gmail address",
+      (await page.evaluate(() => document.querySelector("#lfEmail").placeholder)) === "yourname@gmail.com",
+      await page.evaluate(() => document.querySelector("#lfEmail").placeholder)
+    );
 
-    await fill(page, "#lfEmail", "owner@creewrld.test");
+    // Deliberately messy input: leading/trailing spaces and mixed case.
+    await fill(page, "#lfEmail", "  Owner@CreeWRLD.TEST ");
     await fill(page, "#lfPass", "wrong-password");
     await submit(page, "#loginForm");
     await wait(600);
     ok("wrong password is rejected by Supabase Auth", await isVisible(page, "#loginError"));
     ok(
+      "the refusal names the Gmail address",
+      (await text(page, "#loginError")) ===
+        "That Gmail address or password doesn't match an authorized studio account.",
+      await text(page, "#loginError")
+    );
+    ok(
+      "the error is styled as a panel, not a bare hint",
+      (await page.evaluate(() => {
+        const node = document.querySelector("#loginError");
+        return node.classList.contains("field__err--block") &&
+          window.getComputedStyle(node).borderLeftWidth !== "0px";
+      })) === true
+    );
+
+    const attempt = stub
+      .calls()
+      .filter((call) => call.path === "/auth/v1/token" && /grant_type=password/.test(call.query))
+      .pop();
+    ok(
+      "the address is trimmed and lower-cased before it is sent",
+      attempt && attempt.body.email === "owner@creewrld.test",
+      attempt && attempt.body.email
+    );
+    ok(
+      "the field shows the normalised address",
+      (await page.evaluate(() => document.querySelector("#lfEmail").value)) === "owner@creewrld.test"
+    );
+    ok(
       "a rejected sign-in leaves the shopper view intact",
       (await page.evaluate(() => document.body.classList.contains("is-admin"))) === false
     );
 
-    await fill(page, "#lfEmail", "owner@creewrld.test");
+    await fill(page, "#lfEmail", "OWNER@creewrld.TEST");
     await fill(page, "#lfPass", "creewrld");
     await submit(page, "#loginForm");
     await wait(800);
+    ok("a Gmail address typed in any case signs in", await isVisible(page, "#loginError") === false);
     ok("merchant mode enabled", (await page.evaluate(() => document.body.classList.contains("is-admin"))) === true);
     ok("merchant strip appears", await isVisible(page, "#merchantBar"));
     ok("header reflects the signed-in email", (await text(page, "#loginBtnLabel")) === "Studio · owner", await text(page, "#loginBtnLabel"));
