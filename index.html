@@ -434,9 +434,13 @@
       <div class="field">
         <label for="lfPass">Password</label>
         <input id="lfPass" name="password" type="password" autocomplete="current-password"
+          autocapitalize="none" autocorrect="off" spellcheck="false"
           placeholder="••••••••" required />
       </div>
-      <p class="field__err field__err--block" id="loginError" role="alert" hidden></p>
+      <div class="field__err field__err--block" id="loginError" role="alert" hidden>
+        <p id="loginErrorText"></p>
+        <p class="field__err__detail" id="loginErrorDetail" hidden></p>
+      </div>
       <button type="submit" class="btn btn--primary btn--wide" id="loginSubmit">Enter studio</button>
       <p class="form__fine">
         Access runs through <strong>Supabase Auth</strong> on the studio's

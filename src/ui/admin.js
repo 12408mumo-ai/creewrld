@@ -24,7 +24,7 @@ import { selectCategory } from "./grid.js";
 import { closeLayer, openLayer, toast } from "./layers.js";
 import { uploadProductImage, validateImage } from "../data/storage.js";
 import { NETWORK_ERROR, normalizeEmail } from "../data/auth.js";
-import { describeError } from "../lib/supabase.js";
+import { describeError, supabaseConfig } from "../lib/supabase.js";
 
 const loginModal = () => $("#loginModal");
 const productModal = () => $("#productModal");
@@ -73,11 +73,36 @@ export function applyAdminChrome() {
 
 /* --------------------------------------------------------------------- login */
 
+/** Blank the refusal panel — message, Supabase's detail line, and visibility. */
+function clearLoginError() {
+  const error = $("#loginError");
+  const text = $("#loginErrorText");
+  const detail = $("#loginErrorDetail");
+  if (text) text.textContent = "";
+  if (detail) {
+    detail.textContent = "";
+    detail.hidden = true;
+  }
+  if (error) error.hidden = true;
+}
+
+/** Show the sentence, plus Supabase's own answer underneath when we have one. */
+function showLoginError(message, detail) {
+  const error = $("#loginError");
+  const text = $("#loginErrorText");
+  const node = $("#loginErrorDetail");
+  if (text) text.textContent = message || "";
+  if (node) {
+    node.textContent = detail || "";
+    node.hidden = !detail;
+  }
+  if (error) error.hidden = false;
+}
+
 export function openLogin(pending) {
   pendingAction = typeof pending === "function" ? pending : null;
   $("#loginForm").reset();
-  $("#loginError").hidden = true;
-  $("#loginError").textContent = "";
+  clearLoginError();
 
   const configured = state.configured;
   const email = $("#lfEmail");
@@ -86,10 +111,9 @@ export function openLogin(pending) {
   if (email) email.disabled = !configured;
 
   if (!configured) {
-    const error = $("#loginError");
-    error.hidden = false;
-    error.textContent =
-      "Studio login is unavailable: this build has no Supabase credentials. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY, then redeploy.";
+    showLoginError(
+      "Studio login is unavailable: this build has no Supabase credentials. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY, then redeploy."
+    );
   }
 
   openLayer(loginModal(), email);
@@ -115,24 +139,36 @@ async function handleLogin(event) {
   event.preventDefault();
 
   const field = $("#lfEmail");
-  // Trim and lower-case before anything else: Gmail addresses are stored in
-  // lower case, so "  Owner@Gmail.com " has to become "owner@gmail.com".
+  const passField = $("#lfPass");
+
+  // Addresses are stored lower-case, so "  12408Mumo@Gmail.com " has to become
+  // "12408mumo@gmail.com" before it is compared. The password is trimmed too:
+  // a phone keyboard loves to append a space on autofill.
   const email = normalizeEmail(field.value);
-  const password = $("#lfPass").value;
-  const error = $("#loginError");
+  const typedPassword = passField.value;
+  const password = typedPassword.trim();
 
   // Show the normalised address, so what is on screen is what was sent.
   if (field.value !== email) field.value = email;
 
-  // Clear whatever the last attempt said, text and all, before this one runs.
-  error.textContent = "";
-  error.hidden = true;
+  clearLoginError();
 
   if (!email || !password) {
-    error.hidden = false;
-    error.textContent = "Enter your studio Gmail address and password.";
+    showLoginError("Enter your studio Gmail address and password.");
     return;
   }
+
+  // Deliberately loud: when a sign-in is refused, the address, the project it
+  // is being sent to, and whether the password was altered on the way are the
+  // three facts that explain it. The password itself is never logged.
+  console.log("Attempting login for:", email);
+  console.log(
+    "[auth] project:",
+    supabaseConfig.url || "(no Supabase URL in this build)",
+    "| password chars:",
+    password.length,
+    password !== typedPassword ? "(surrounding whitespace trimmed)" : ""
+  );
 
   setLoginBusy(true);
 
@@ -145,11 +181,32 @@ async function handleLogin(event) {
     setLoginBusy(false);
   }
 
+  // Trimming the password is the requested behaviour, but a space can be part
+  // of a real password. If we removed one and were refused, try the string the
+  // merchant actually typed before giving up — otherwise this form could cause
+  // the very failure it is meant to cure.
+  if (!result.ok && password !== typedPassword) {
+    console.log("[auth] refused after trimming — retrying with the password exactly as typed");
+    setLoginBusy(true);
+    try {
+      result = await signIn(email, typedPassword);
+    } catch (err) {
+      result = { ok: false, error: describeError(err, NETWORK_ERROR) };
+    } finally {
+      setLoginBusy(false);
+    }
+  }
+
   if (!result.ok) {
-    error.hidden = false;
-    error.textContent = result.error;
-    $("#lfPass").value = "";
-    $("#lfPass").focus();
+    showLoginError(result.error, result.detail);
+    if (result.code === "invalid_credentials" || result.code === "invalid_grant") {
+      console.warn(
+        "[auth] invalid_credentials: Supabase refused this address/password pair. If the user is in the Dashboard, confirm it belongs to",
+        supabaseConfig.url || "this project"
+      );
+    }
+    passField.value = "";
+    passField.focus();
     return;
   }
 
@@ -445,6 +502,13 @@ export function bindAdmin() {
   });
 
   $("#loginForm").addEventListener("submit", handleLogin);
+
+  // A refusal belongs to the attempt that caused it. Start changing either
+  // field and the message about the last one gets out of the way.
+  ["#lfEmail", "#lfPass"].forEach((selector) => {
+    const input = $(selector);
+    if (input) input.addEventListener("input", clearLoginError);
+  });
   $("#productForm").addEventListener("submit", handleProductSubmit);
 
   $("#pfImage").addEventListener("input", () => {

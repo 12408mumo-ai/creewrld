@@ -107,23 +107,42 @@ instead of rendering an empty shop:
 
 ### If the studio refuses a sign-in
 
-The form shows one sentence for both cases, because from the outside they look identical:
+A refused sign-in shows the sentence
 
 > Invalid Gmail or password. Please verify your credentials or confirm the account in the
 > Supabase Dashboard.
 
-Work through these in order — the browser console also logs the exact Supabase code, e.g.
-`[auth] sign-in refused: email_not_confirmed`, which settles it immediately:
+and, underneath it in grey, Supabase's own answer — e.g. `Invalid login credentials
+(invalid_grant, 400)`. The browser console also prints the three facts that explain a refusal:
 
-1. **Authentication → Users** — does the address exist? The **Last sign in** column tells you
-   whether it ever got in.
-2. **The Confirmed column.** If the account was added without *Auto Confirm User*, it exists but
-   cannot sign in. Open the user → **Confirm email**, or create it again with auto-confirm ticked.
-3. **Reset the password** from the same panel if the address is right but the password is not.
-4. **Authentication → Providers → Email** — leave *Confirm email* off for a single studio account;
-   there is no mail flow in the storefront to complete a confirmation for you.
-5. **The session is not the problem.** If the header never changes to `Logout`, the session never
-   existed: every merchant control is driven by `onAuthStateChange`, not by a flag in this page.
+```
+Attempting login for: 12408mumo@gmail.com
+[auth] project: https://<ref>.supabase.co | password chars: 9
+Supabase Auth Error: Invalid login credentials
+```
+
+`invalid_credentials` / `invalid_grant` means Supabase refused the **address and password
+together**. It will not say which was wrong — that is deliberate, so addresses cannot be
+enumerated — which leaves four things to check, in this order:
+
+1. **Same project?** Compare the `[auth] project:` URL in the console with the project open in the
+   dashboard. A user created in project A cannot sign in through project B's keys, and this is the
+   most common cause of "it exists, but it is refused". The URL is in
+   *Vercel → Settings → Environment Variables* for the environment you are viewing (a Preview
+   deployment does not inherit Production variables unless they were scoped to it).
+2. **Same address?** The console prints exactly what was sent, after trimming and lower-casing.
+   Compare it character by character with the Dashboard row — `12408mumo` vs `12408Mumo` is fine,
+   a stray `.` or a different number is not.
+3. **Confirmed?** *Authentication → Users* has a **Confirmed** column. A user added without *Auto
+   Confirm User* exists but cannot sign in: open the user → **Confirm email**.
+4. **Password?** If the address is right and confirmed, the password is the answer. Use the row's
+   menu → **Reset password**, or delete the user and re-add it with a password you type carefully.
+   The form trims surrounding whitespace from the password (a phone keyboard adds it on autofill);
+   if that changes what you typed and the sign-in is refused, it retries once with the password
+   exactly as entered, so a deliberate leading or trailing space still works.
+
+If the modal says it has no Supabase credentials, the build has no `NEXT_PUBLIC_SUPABASE_URL` /
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` — nothing about the account can be the problem there.
 
 ### Data model
 
