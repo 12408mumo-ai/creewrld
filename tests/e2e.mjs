@@ -566,6 +566,126 @@ async function run() {
     ok("legacy product image decodes", migrated.width > 0, String(migrated.width));
     ok("legacy cart lines still resolve", migrated.cart === "2", migrated.cart);
 
+    /* ------------------------------------------------ typography & contrast */
+    section("Typography & contrast");
+    await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+    await page.reload({ waitUntil: "networkidle0" });
+    await wait(500);
+
+    const type = await page.evaluate(() => {
+      const toRgb = (c) => c.match(/[\d.]+/g).slice(0, 3).map(Number);
+      const lum = (rgb) => {
+        const [r, g, b] = rgb.map((v) => {
+          const s = v / 255;
+          return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const bgOf = (el) => {
+        let n = el;
+        while (n && n !== document.documentElement) {
+          const parts = getComputedStyle(n).backgroundColor.match(/[\d.]+/g);
+          if (parts && (parts.length < 4 || Number(parts[3]) > 0.5)) return toRgb("rgb(" + parts.slice(0, 3).join(",") + ")");
+          n = n.parentElement;
+        }
+        return [5, 5, 5];
+      };
+      const contrast = (el) => {
+        const a = lum(toRgb(getComputedStyle(el).color)) + 0.05;
+        const b = lum(bgOf(el)) + 0.05;
+        return +(Math.max(a, b) / Math.min(a, b)).toFixed(2);
+      };
+      const grab = (sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return null;
+        const cs = getComputedStyle(el);
+        return {
+          size: cs.fontSize,
+          weight: cs.fontWeight,
+          spacing: cs.letterSpacing,
+          color: cs.color,
+          ratio: contrast(el)
+        };
+      };
+      // smallest rendering text, ignoring decorative glyphs and counter badges
+      const tiny = Array.from(document.querySelectorAll("body *"))
+        .filter((el) => {
+          if (el.closest(".announce, .cart-count")) return false;
+          const text = Array.from(el.childNodes)
+            .filter((n) => n.nodeType === 3)
+            .map((n) => n.textContent.trim())
+            .join("");
+          if (!text) return false;
+          const cs = getComputedStyle(el);
+          if (cs.display === "none" || cs.visibility === "hidden") return false;
+          return parseFloat(cs.fontSize) < 11;
+        })
+        .map((el) => el.className + " @ " + getComputedStyle(el).fontSize);
+      return {
+        nav: grab(".nav__link"),
+        login: grab(".action:not(.action--cart)"),
+        cart: grab(".action--cart"),
+        meta: grab(".eyebrow"),
+        intro: grab(".hero__lede"),
+        cardMeta: grab(".card__meta"),
+        cardPrice: grab(".card__price"),
+        cardOrder: grab(".card__order"),
+        cardBadge: grab(".card__badge"),
+        sectionLabel: grab(".section-label"),
+        tiny
+      };
+    });
+
+    const eq = (a, b) => Math.abs(parseFloat(a) - b) < 0.06;
+    ok(
+      "nav links: 13px / 500 / 0.15em",
+      eq(type.nav.size, 13) && type.nav.weight === "500" && eq(type.nav.spacing, 13 * 0.15),
+      JSON.stringify(type.nav)
+    );
+    ok(
+      "LOGIN / ADMIN + CART match the nav spec",
+      eq(type.login.size, 13) && type.login.weight === "500" && eq(type.cart.size, 13) && type.cart.weight === "500"
+    );
+    ok(
+      "nav links use off-white #E5E5E5",
+      type.nav.color === "rgb(229, 229, 229)" && type.login.color === "rgb(229, 229, 229)" && type.cart.color === "rgb(229, 229, 229)",
+      type.nav.color
+    );
+    ok(
+      "metadata: 12px / 0.2em muted platinum #8E8E93",
+      eq(type.meta.size, 12) && eq(type.meta.spacing, 12 * 0.2) && type.meta.color === "rgb(142, 142, 147)",
+      JSON.stringify(type.meta)
+    );
+    ok(
+      "intro paragraph: 16px / 1.6 / soft cool silver #B0B0B0",
+      eq(type.intro.size, 16) && type.intro.color === "rgb(176, 176, 176)" &&
+        (await page.evaluate(() => getComputedStyle(document.querySelector(".hero__lede")).lineHeight)) === "25.6px",
+      JSON.stringify(type.intro)
+    );
+    ok(
+      "product card + overlay text: 13px / #D1D1D6",
+      [type.cardMeta, type.cardPrice, type.cardOrder].every(
+        (t) => eq(t.size, 13) && t.color === "rgb(209, 209, 214)"
+      ),
+      JSON.stringify([type.cardMeta, type.cardPrice, type.cardOrder])
+    );
+    ok(
+      "every reading colour clears WCAG AA (4.5:1)",
+      [type.nav, type.login, type.cart, type.meta, type.intro, type.cardMeta, type.cardPrice, type.cardOrder, type.cardBadge, type.sectionLabel]
+        .every((t) => t && t.ratio >= 4.5),
+      JSON.stringify({ nav: type.nav.ratio, meta: type.meta.ratio, intro: type.intro.ratio, card: type.cardMeta.ratio })
+    );
+    ok(
+      "nav + card text clear AAA on the large end (7:1)",
+      type.nav.ratio >= 7 && type.cardMeta.ratio >= 7,
+      "nav " + type.nav.ratio + ":1, card " + type.cardMeta.ratio + ":1"
+    );
+    ok(
+      "no reading text renders below 11px",
+      type.tiny.length === 0,
+      type.tiny.slice(0, 6).join(" | ")
+    );
+
     /* -------------------------------------------------------------- a11y */
     section("Accessibility (axe-core)");
     await page.evaluate(() => localStorage.clear());
