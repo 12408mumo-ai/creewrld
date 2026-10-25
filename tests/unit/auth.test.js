@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CREDENTIALS_ERROR, normalizeEmail } from "../../src/data/auth.js";
+import { CREDENTIALS_ERROR, NETWORK_ERROR, describeAuthError, normalizeEmail } from "../../src/data/auth.js";
 
 describe("normalizeEmail", () => {
   it("trims whitespace from a pasted address", () => {
@@ -29,11 +29,43 @@ describe("normalizeEmail", () => {
 });
 
 describe("CREDENTIALS_ERROR", () => {
-  it("names Gmail and an authorized studio account", () => {
+  it("is the requested sentence, word for word", () => {
     expect(CREDENTIALS_ERROR).toBe(
-      "That Gmail address or password doesn't match an authorized studio account."
+      "Invalid Gmail or password. Please verify your credentials or confirm the account in the Supabase Dashboard."
     );
-    expect(CREDENTIALS_ERROR).toMatch(/gmail/i);
-    expect(CREDENTIALS_ERROR).toMatch(/authorized studio account/i);
+  });
+});
+
+describe("describeAuthError", () => {
+  it("answers a wrong password with the credential sentence", () => {
+    expect(describeAuthError({ code: "invalid_grant", message: "Invalid login credentials" })).toBe(
+      CREDENTIALS_ERROR
+    );
+    expect(describeAuthError({ error_code: "invalid_credentials" })).toBe(CREDENTIALS_ERROR);
+  });
+
+  it("answers an unconfirmed account with the same sentence", () => {
+    expect(describeAuthError({ code: "email_not_confirmed", status: 400 })).toBe(CREDENTIALS_ERROR);
+    expect(describeAuthError({ message: "Email not confirmed" })).toBe(CREDENTIALS_ERROR);
+  });
+
+  it("treats any bare 400 or 401 as refused credentials", () => {
+    expect(describeAuthError({ status: 400 })).toBe(CREDENTIALS_ERROR);
+    expect(describeAuthError({ status: 401 })).toBe(CREDENTIALS_ERROR);
+  });
+
+  it("does not blame the password when the request never arrived", () => {
+    expect(describeAuthError({ message: "TypeError: Failed to fetch" })).toBe(NETWORK_ERROR);
+    expect(NETWORK_ERROR).not.toBe(CREDENTIALS_ERROR);
+  });
+
+  it("keeps rate limiting distinct, because waiting is the fix", () => {
+    expect(describeAuthError({ code: "over_request_rate_limit" })).toMatch(/too many attempts/i);
+    expect(describeAuthError({ message: "Too many requests" })).toMatch(/too many attempts/i);
+  });
+
+  it("falls back to something readable for an unknown failure", () => {
+    expect(describeAuthError({ message: "Something odd happened" })).toMatch(/something odd happened/i);
+    expect(describeAuthError(null)).toMatch(/sign in failed/i);
   });
 });

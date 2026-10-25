@@ -34,8 +34,9 @@ create it under *Authentication → Users → Add user*. The form trims and lowe
 before sending it, so case never matters. There are no bundled credentials.
 
 Adding a piece is **merchant-only**: there is no `+ Add Product` control in the public header.
-Sign in with `Login / Admin` and the merchant strip exposes `+ New product` (plus per-card edit
-overlays). Signing out removes them again.
+Sign in with `Login / Admin` — the header link then reads `Logout`, and the merchant strip exposes
+`+ New product` (plus per-card edit overlays). Clicking `Logout` ends the Supabase session and
+returns the storefront to shopper view.
 
 Requirements: Node **20.19+**. The e2e suite additionally needs a local Chrome/Chromium — see
 [Verification](#verification).
@@ -103,6 +104,26 @@ instead of rendering an empty shop:
 4. **Check Realtime (optional).** *Database → Replication* — the `products` table is added to the
    publication by the schema. If Realtime is off the storefront still refreshes when the tab
    regains focus.
+
+### If the studio refuses a sign-in
+
+The form shows one sentence for both cases, because from the outside they look identical:
+
+> Invalid Gmail or password. Please verify your credentials or confirm the account in the
+> Supabase Dashboard.
+
+Work through these in order — the browser console also logs the exact Supabase code, e.g.
+`[auth] sign-in refused: email_not_confirmed`, which settles it immediately:
+
+1. **Authentication → Users** — does the address exist? The **Last sign in** column tells you
+   whether it ever got in.
+2. **The Confirmed column.** If the account was added without *Auto Confirm User*, it exists but
+   cannot sign in. Open the user → **Confirm email**, or create it again with auto-confirm ticked.
+3. **Reset the password** from the same panel if the address is right but the password is not.
+4. **Authentication → Providers → Email** — leave *Confirm email* off for a single studio account;
+   there is no mail flow in the storefront to complete a confirmation for you.
+5. **The session is not the problem.** If the header never changes to `Logout`, the session never
+   existed: every merchant control is driven by `onAuthStateChange`, not by a flag in this page.
 
 ### Data model
 
