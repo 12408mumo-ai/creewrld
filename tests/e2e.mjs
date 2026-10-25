@@ -228,7 +228,8 @@ async function run() {
       preloads: Array.from(document.querySelectorAll('link[rel="preload"][as="font"]')).map((n) =>
         n.getAttribute("href")
       ),
-      monogram: Array.from(document.querySelectorAll('img[src*="logo"]')).map((n) => n.getAttribute("src"))
+      logo: Array.from(document.querySelectorAll('img[src*="logo"]')).map((n) => n.getAttribute("src")),
+      headerButtons: Array.from(document.querySelectorAll(".actions button")).map((n) => n.textContent.replace(/\s+/g, " ").trim())
     }));
 
     ok(
@@ -241,16 +242,31 @@ async function run() {
       buildInfo.styles.length === 1 && /\.\/assets\/style-[\w-]+\.css$/.test(buildInfo.styles[0]),
       JSON.stringify(buildInfo.styles)
     );
-    ok("3 hashed font preloads injected", buildInfo.preloads.length === 3, buildInfo.preloads.join(", "));
+    ok("2 hashed font preloads injected", buildInfo.preloads.length === 2, buildInfo.preloads.join(", "));
     ok(
       "preload hrefs are hashed font files",
       buildInfo.preloads.every((href) => /^\.\/assets\/[\w-]+-[\w-]+\.woff2$/.test(href)),
       buildInfo.preloads.join(", ")
     );
     ok(
-      "monogram resolves through the public dir",
-      buildInfo.monogram.every((src) => src === "./assets/logo/creewrld-monogram.svg"),
-      buildInfo.monogram[0]
+      "official brand artwork resolves through the public dir",
+      buildInfo.logo.length >= 6 && buildInfo.logo.every((src) => src.startsWith("./assets/logo/creewrld-")),
+      buildInfo.logo.join(", ")
+    );
+    ok(
+      "header uses the extracted mark + wordmark",
+      buildInfo.logo.includes("./assets/logo/creewrld-mark.png") &&
+        buildInfo.logo.includes("./assets/logo/creewrld-wordmark.png"),
+      buildInfo.logo.join(", ")
+    );
+    ok(
+      "footer uses the full Gothic lockup",
+      buildInfo.logo.includes("./assets/logo/creewrld-lockup.png")
+    );
+    ok(
+      "header has no Add Product button for shoppers",
+      !buildInfo.headerButtons.some((label) => /add product/i.test(label)),
+      buildInfo.headerButtons.join(" | ")
     );
 
     const preloadStatuses = await page.evaluate(async (hrefs) =>
@@ -272,13 +288,13 @@ async function run() {
 
     const fontsReady = await page.evaluate(async () => {
       await document.fonts.ready;
-      return ["Bodoni Moda", "Inter", "JetBrains Mono", "UnifrakturCook"].map((family) => [
+      return ["Bodoni Moda", "Inter", "JetBrains Mono"].map((family) => [
         family,
         document.fonts.check('16px "' + family + '"')
       ]);
     });
     ok(
-      "all four typefaces load from hashed woff2 files",
+      "all three typefaces load from hashed woff2 files",
       fontsReady.every(([, loaded]) => loaded === true),
       JSON.stringify(fontsReady)
     );
@@ -298,6 +314,19 @@ async function run() {
     ok("hero lookbook has 4 slides", (await count(page, "#heroSlides img")) === 4);
     ok("announcement marquee carries the delivery promise", /free delivery within nairobi/i.test((await text(page, ".announce")) || ""));
     ok("spinning monogram is present", await isVisible(page, ".brand__spinner img"));
+    ok("spinning logo uses the official mark", /creewrld-mark\.png$/.test(await page.evaluate(() => document.querySelector(".brand__spinner img").getAttribute("src"))));
+    ok("official wordmark sits beneath the spinner", await isVisible(page, ".brand__word"));
+    ok(
+      "spinner keeps the continuous Y-axis rotation",
+      (await page.evaluate(() => getComputedStyle(document.querySelector(".brand__spinner")).animationName)) === "spin-y"
+    );
+    ok(
+      "official mark renders at header size",
+      (await page.evaluate(() => {
+        const img = document.querySelector(".brand__spinner img");
+        return img.complete && img.naturalWidth > 0;
+      })) === true
+    );
     ok("every card exposes an Order button", await page.evaluate(() => Array.from(document.querySelectorAll(".card__order")).every((b) => b.textContent.trim() === "Order")));
 
     /* --------------------------------------------------------------- filter */
@@ -437,7 +466,8 @@ async function run() {
       return window.getComputedStyle(node).visibility === "visible";
     })) === true);
 
-    await click(page, "#addProductBtn");
+    ok("merchant strip exposes the add action", await isVisible(page, "#merchantAdd"));
+    await click(page, "#merchantAdd");
     await wait(300);
     ok("add-product form opens for the merchant", await isVisible(page, "#productModal"));
 

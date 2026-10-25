@@ -53,13 +53,6 @@
   font-style: normal;
   font-display: swap;
 }
-@font-face {
-  font-family: "UnifrakturCook";
-  src: url("../assets/fonts/unifrakturcook-gothic.woff2") format("woff2");
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
 
 /* ------------------------------ Tokens ---------------------------------- */
 :root {
@@ -79,7 +72,6 @@
   --font-serif: "Playfair Display", "Bodoni Moda", Georgia, serif;
   --font-sans: "Inter", "Helvetica Neue", Arial, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --font-gothic: "UnifrakturCook", "Bodoni Moda", serif;
 
   --gutter: clamp(20px, 5vw, 72px);
   --top-h: 132px;
@@ -359,6 +351,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 .site-top.is-scrolled .announce { height: 0; opacity: 0; border-bottom-color: transparent; }
 .site-top.is-scrolled .header { height: 76px; }
 .site-top.is-scrolled .brand__stage { transform: scale(0.86); }
+.site-top.is-scrolled .brand__word { width: 74px; }
 
 .nav {
   display: flex;
@@ -401,8 +394,8 @@ ul { margin: 0; padding: 0; list-style: none; }
   gap: 2px;
 }
 .brand__stage {
-  width: 62px;
-  height: 62px;
+  width: 64px;
+  height: 64px;
   display: grid;
   place-items: center;
   perspective: 460px;
@@ -413,7 +406,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   width: 100%;
   height: 100%;
   transform-style: preserve-3d;
-  animation: spin-y 9s linear infinite;
+  animation: spin-y 12s linear infinite;
   will-change: transform;
 }
 @keyframes spin-y {
@@ -429,9 +422,9 @@ ul { margin: 0; padding: 0; list-style: none; }
   -webkit-backface-visibility: hidden;
 }
 .brand__face img {
-  width: 54px;
+  width: 100%;
   height: auto;
-  filter: drop-shadow(0 0 16px rgba(255, 255, 255, 0.14));
+  filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.22));
 }
 .brand__face--ghost {
   transform: translateZ(-16px) scale(0.92);
@@ -441,15 +434,14 @@ ul { margin: 0; padding: 0; list-style: none; }
 .brand__face--back { transform: rotateY(180deg) scaleX(-1); }
 
 .brand__word {
-  white-space: nowrap;
-  font-family: var(--font-gothic);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.3em;
-  text-indent: 0.3em;
-  color: var(--ink);
-  line-height: 1;
+  display: block;
+  width: 84px;
+  height: auto;
+  margin-top: 1px;
+  opacity: 0.95;
+  transition: opacity 0.3s var(--ease), width 0.45s var(--ease);
 }
+.brand:hover .brand__word { opacity: 1; }
 
 /* Actions */
 .actions {
@@ -1227,14 +1219,10 @@ body.is-admin .card__admin {
   gap: clamp(30px, 4vw, 64px);
   padding-bottom: clamp(40px, 6vh, 70px);
 }
-.footer__mark { width: 58px; height: auto; opacity: 0.95; }
-.footer__word {
-  font-family: var(--font-gothic);
-  font-size: clamp(1.5rem, 3.2vw, 2.6rem);
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  line-height: 1;
-  margin-top: 18px;
+.footer__mark {
+  width: clamp(128px, 16vw, 168px);
+  height: auto;
+  opacity: 0.95;
 }
 .footer__line {
   margin-top: 12px;
@@ -2051,7 +2039,7 @@ select option { background: #0b0b0b; color: #fff; }
   .action { padding: 10px; gap: 0; }
   .action--cart { padding: 8px 10px; gap: 7px; }
   .action--cart span:first-of-type { display: inline; }
-  .brand__stage { width: 58px; height: 58px; }
+  .brand__stage { width: 56px; height: 56px; }
   .hero__inner { grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: 36px; }
   .nav { gap: 22px; }
 }
@@ -2108,9 +2096,8 @@ select option { background: #0b0b0b; color: #fff; }
 
 @media (max-width: 560px) {
   .header { height: 76px; gap: 12px; }
-  .brand__stage { width: 48px; height: 48px; }
-  .brand__face img { width: 42px; }
-  .brand__word { font-size: 9px; letter-spacing: 0.24em; }
+  .brand__stage { width: 46px; height: 46px; }
+  .brand__word { width: 68px; }
   .action { padding: 8px; }
   .action .ico { font-size: 17px; }
   .action--cart span:first-of-type { display: none; }
@@ -2134,9 +2121,8 @@ select option { background: #0b0b0b; color: #fff; }
 }
 
 @media (max-width: 370px) {
-  .brand__stage { width: 42px; height: 42px; }
-  .brand__face img { width: 38px; }
-  .brand__word { font-size: 7.5px; letter-spacing: 0.16em; text-indent: 0.16em; }
+  .brand__stage { width: 38px; height: 38px; }
+  .brand__word { width: 58px; }
   .header { gap: 8px; }
   .action { padding: 7px; }
   .action .ico { font-size: 16px; }

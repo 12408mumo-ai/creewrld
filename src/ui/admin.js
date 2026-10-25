@@ -288,31 +288,34 @@ export function confirmSignOut() {
 
 /* ----------------------------------------------------------------- binding */
 
-export function bindAdmin() {
-  const addProduct = () => requireAdmin(() => openProductForm(null));
+const on = (selector, handler) => {
+  const node = $(selector);
+  if (node) node.addEventListener("click", handler);
+};
 
-  $("#addProductBtn").addEventListener("click", addProduct);
-  $("#mobileAddProduct").addEventListener("click", addProduct);
-  $("#merchantAdd").addEventListener("click", () => {
+export function bindAdmin() {
+  // Adding a piece is merchant-only: the entry point lives in the signed-in
+  // merchant strip (and per-card edit overlays), never in the public header.
+  on("#merchantAdd", () => {
     if (state.admin) openProductForm(null);
   });
-  $("#merchantReset").addEventListener("click", () => {
+  on("#merchantReset", () => {
     if (state.admin) confirmReset();
   });
-  $("#merchantLogout").addEventListener("click", () => {
+  on("#merchantLogout", () => {
     signOut();
     toast("Signed out of merchant mode");
   });
-  $("#footerAdmin").addEventListener("click", () => {
+  on("#footerAdmin", () => {
     if (state.admin) signOut();
     else openLogin();
   });
 
-  $("#loginBtn").addEventListener("click", () => {
+  on("#loginBtn", () => {
     if (state.admin) confirmSignOut();
     else openLogin();
   });
-  $("#mobileLogin").addEventListener("click", () => {
+  on("#mobileLogin", () => {
     if (state.admin) signOut();
     else openLogin();
   });
@@ -358,7 +361,7 @@ export function bindAdmin() {
   }
 
   // Card overlays route through here from app.js via these helpers.
-  return { addProduct };
+  return { openProductForm, confirmDelete, confirmReset };
 }
 
 export const isDraftOpen = () => productModal().classList.contains("is-open");
