@@ -23,6 +23,7 @@ import {
 import { selectCategory } from "./grid.js";
 import { closeLayer, openLayer, toast } from "./layers.js";
 import { uploadProductImage, validateImage } from "../data/storage.js";
+import { CREDENTIALS_ERROR, normalizeEmail } from "../data/auth.js";
 import { describeError } from "../lib/supabase.js";
 
 const loginModal = () => $("#loginModal");
@@ -107,13 +108,19 @@ const setLoginBusy = (busy) => {
 async function handleLogin(event) {
   event.preventDefault();
 
-  const email = $("#lfEmail").value.trim();
+  const field = $("#lfEmail");
+  // Trim and lower-case before anything else: Gmail addresses are stored in
+  // lower case, so "  Owner@Gmail.com " has to become "owner@gmail.com".
+  const email = normalizeEmail(field.value);
   const password = $("#lfPass").value;
   const error = $("#loginError");
 
+  // Show the normalised address, so what is on screen is what was sent.
+  if (field.value !== email) field.value = email;
+
   if (!email || !password) {
     error.hidden = false;
-    error.textContent = "Enter your studio email and password.";
+    error.textContent = "Enter your studio Gmail address and password.";
     return;
   }
 
@@ -124,7 +131,7 @@ async function handleLogin(event) {
   try {
     result = await signIn(email, password);
   } catch (err) {
-    result = { ok: false, error: describeError(err, "Sign in failed. Please try again.") };
+    result = { ok: false, error: describeError(err, CREDENTIALS_ERROR) };
   } finally {
     setLoginBusy(false);
   }

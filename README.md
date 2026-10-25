@@ -29,8 +29,9 @@ The database itself is one SQL file: run [`supabase/schema.sql`](supabase/schema
 Supabase SQL editor, then optionally [`supabase/seed.sql`](supabase/seed.sql) for the original ten
 pieces. See [Supabase setup](#supabase-setup).
 
-**Merchant sign-in** uses a real Supabase Auth account (email + password) — create it under
-*Authentication → Users → Add user*. There are no bundled credentials.
+**Merchant sign-in** uses a real Supabase Auth account (the studio's Gmail address and password) —
+create it under *Authentication → Users → Add user*. The form trims and lower-cases the address
+before sending it, so case never matters. There are no bundled credentials.
 
 Adding a piece is **merchant-only**: there is no `+ Add Product` control in the public header.
 Sign in with `Login / Admin` and the merchant strip exposes `+ New product` (plus per-card edit
@@ -89,9 +90,12 @@ instead of rendering an empty shop:
    [`supabase/reset.sql`](supabase/reset.sql) first — it drops only the three tables and the trigger —
    then re-run `schema.sql` (and `seed.sql` if you want the starter pieces). Only do that on a project
    with no real content yet.
-2. **Create the merchant account.** *Authentication → Users → Add user* — email and password. Any
-   authenticated user may manage the catalogue; with a single studio account that is exactly right.
-   If you later add staff, tighten the product policies to a specific role.
+2. **Create the merchant account.** *Authentication → Users → Add user* — the studio's Gmail
+   address and a password. The login form is labelled **Studio Gmail** and normalises what is typed
+   (trimmed, lower-cased) before handing it to Supabase Auth, so the address stored here only has to
+   match; it does not have to be typed in any particular case. Any authenticated user may manage the
+   catalogue; with a single studio account that is exactly right. If you later add staff, tighten the
+   product policies to a specific role.
 3. **Publish the starter catalogue (optional).** Run [`supabase/seed.sql`](supabase/seed.sql) on a
    fresh database to insert the original ten pieces with their bundled photographs. It is a no-op
    once any product exists. You can also do this from the storefront: sign in with an empty
@@ -224,7 +228,7 @@ network. Views never query the database — they render `state` and subscribe to
 | --- | --- |
 | Boot | `products.select("*, categories(name, slug)")` + `categories.select(...)` |
 | Category tab | filtered in memory from the live catalogue, counts included |
-| Merchant sign-in | `auth.signInWithPassword({ email, password })` |
+| Merchant sign-in | `auth.signInWithPassword({ email: email.trim().toLowerCase(), password })` |
 | Session | `auth.onAuthStateChange()` → `state.admin`, so controls survive a refresh |
 | Add / edit | `products.insert()` / `products.update().eq("id", …)` |
 | Delete | `products.delete().eq("id", …)` |

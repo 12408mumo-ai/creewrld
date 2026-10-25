@@ -8,11 +8,24 @@
 
 import { assertConfigured, describeError, supabase } from "../lib/supabase.js";
 
+/**
+ * Studio access uses a Gmail account. Normalise once, here, so every caller
+ * sends the same address Supabase stored: no leading/trailing whitespace from
+ * a paste or a mobile keyboard, and never mixed case.
+ */
+export function normalizeEmail(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+/** The one message shown when a sign-in is refused. */
+export const CREDENTIALS_ERROR =
+  "That Gmail address or password doesn't match an authorized studio account.";
+
 const AUTH_ERRORS = {
-  invalid_credentials: "That email and password don't match a studio account.",
-  invalid_grant: "That email and password don't match a studio account.",
-  email_not_confirmed: "That account hasn't been confirmed yet — check your inbox.",
-  user_not_found: "That email and password don't match a studio account.",
+  invalid_credentials: CREDENTIALS_ERROR,
+  invalid_grant: CREDENTIALS_ERROR,
+  email_not_confirmed: "That Gmail account hasn't been confirmed yet — check your inbox.",
+  user_not_found: CREDENTIALS_ERROR,
   over_request_rate_limit: "Too many attempts. Wait a minute and try again.",
   too_many_requests: "Too many attempts. Wait a minute and try again."
 };
@@ -23,10 +36,10 @@ function authMessage(error) {
   if (AUTH_ERRORS[code]) return AUTH_ERRORS[code];
 
   const status = Number(error.status);
-  if (status === 400 || status === 401) return AUTH_ERRORS.invalid_credentials;
+  if (status === 400 || status === 401) return CREDENTIALS_ERROR;
 
   const message = String(error.message || error.error_description || "").trim();
-  if (/invalid login credentials/i.test(message)) return AUTH_ERRORS.invalid_credentials;
+  if (/invalid login credentials/i.test(message)) return CREDENTIALS_ERROR;
   if (/email not confirmed/i.test(message)) return AUTH_ERRORS.email_not_confirmed;
   if (/rate limit|too many/i.test(message)) return AUTH_ERRORS.too_many_requests;
 
@@ -37,7 +50,7 @@ function authMessage(error) {
 export async function signInWithPassword(email, password) {
   const client = assertConfigured();
   const { data, error } = await client.auth.signInWithPassword({
-    email: String(email || "").trim(),
+    email: normalizeEmail(email),
     password: String(password || "")
   });
 
