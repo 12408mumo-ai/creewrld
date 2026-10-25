@@ -1,45 +1,126 @@
 # CREE WRLD — Nairobi
 
 A single-page, obsidian-dark storefront for **CREE WRLD**, a Nairobi-based curated thrift house.
-Built as a dependency-free static site: editorial Didone typography, a hand-built Gothic **CW**
-monogram with a continuous 3D Y-axis spin, a filterable catalogue, and a WhatsApp-direct order
-flow with a live Nairobi delivery calculator. The store owner can add, edit and delete pieces from
-the browser, persisted to `localStorage`.
+Built with **Vite**: editorial Didone typography, a hand-built Gothic **CW** monogram with a
+continuous 3D Y-axis spin, a filterable catalogue, and a WhatsApp-direct order flow with a live
+Nairobi delivery calculator. The owner can add, edit and delete pieces from the browser, persisted
+to `localStorage`.
+
+No UI framework and no runtime dependencies — Vite handles bundling, asset hashing and the dev
+server; everything else is hand-written HTML, CSS and ES modules.
 
 ---
 
-## Run it
+## Quick start
 
 ```bash
-node server.js          # → http://localhost:4173
-PORT=8080 node server.js
+npm install
+npm run dev        # http://localhost:5173
+npm run build      # → dist/  (hashed assets, minified CSS/JS)
+npm run preview    # serves dist/ on http://localhost:4173
+npm test           # unit tests → production build → end-to-end suite
 ```
 
-Any static file server works (`index.html` sits at the root). `server.js` is a zero-dependency
-Node static server that only exists for local preview with correct MIME types.
+**Merchant demo credentials:** `admin` / `creewrld` (session persists for 12 hours).
 
-**Merchant demo credentials:** `admin` / `creewrld`
-The session persists for 12 hours in `localStorage` (`creewrld.session.v1`).
+Requirements: Node **20.19+**. The e2e suite additionally needs a local Chrome/Chromium — see
+[Verification](#verification).
 
 ---
 
-## What's inside
+## Scripts
 
-| Path | Purpose |
+| Script | What it does |
 | --- | --- |
-| `index.html` | All markup: marquee, header, hero, shop, service, footer, cart drawer, modals |
-| `assets/css/styles.css` | Full design system — tokens, typography, layout, motion, responsive rules |
-| `assets/js/catalog.js` | Seed catalogue (10 curated pieces) |
-| `assets/js/app.js` | State, rendering, cart, WhatsApp order flow, admin tools, persistence |
-| `assets/logo/creewrld-monogram.svg` | Interlocking Gothic **CW** monogram (vector, drawn from glyph outlines) |
-| `assets/logo/creewrld-mark.png` | 1024 px transparent export of the mark (social / profile use) |
-| `assets/logo/favicon-180.png` | Home-screen / favicon tile |
-| `assets/fonts/` | Self-hosted woff2: Bodoni Moda, Playfair Display, Inter, JetBrains Mono, UnifrakturCook |
-| `assets/img/` | Product photography (dark editorial set) |
-| `server.js` | Local static preview server |
+| `npm run dev` | Vite dev server on `0.0.0.0:5173` (works behind a preview proxy) |
+| `npm run build` | Production build into `dist/` |
+| `npm run preview` | Serve the built output on `0.0.0.0:4173` |
+| `npm run test:unit` | Vitest — pure logic, store, validation, payload |
+| `npm run test:e2e` | Headless Chromium suite against `dist/` |
+| `npm test` / `npm run verify` | All of the above, in order |
 
-No build step, no framework, no network calls. Everything (fonts included) is served locally, so
-the page renders identically offline.
+---
+
+## Project structure
+
+```
+index.html                  Vite entry — markup only (scripts/styles injected by Vite)
+vite.config.js              base "./", host/allowedHosts, font-preload plugin, build options
+public/
+  assets/logo/              monogram, favicon, mark — copied verbatim, stable URLs
+src/
+  main.js                   entry: imports CSS + boots the app
+  app.js                    composition root: state → views → events
+  config.js                 store settings, zones, categories, storage keys
+  catalog.js                seed catalogue + hero lookbook
+  store.js                  state, persistence, selectors, actions (single source of truth)
+  lib/
+    format.js               money/esc/slug/uid helpers
+    storage.js              injectable JSON localStorage wrapper
+    order.js                totals, validation, WhatsApp payload (pure)
+    images.js               maps stored image paths → hashed Vite URLs
+  ui/
+    header.js  hero.js  grid.js  cart.js  quickview.js
+    order.js   admin.js layers.js reveal.js
+  styles/main.css           the full design system
+  assets/
+    fonts/*.woff2           self-hosted Bodoni Moda, Playfair, Inter, JetBrains Mono, UnifrakturCook
+    img/*.jpg               product photography
+tests/
+  unit/*.test.js            Vitest (48 assertions)
+  e2e.mjs                   Puppeteer + axe-core against the production build (111 checks)
+```
+
+---
+
+## How the Vite migration works
+
+**Entry.** `index.html` is the Vite root and contains only markup; `<script type="module"
+src="/src/main.js">` pulls in `styles/main.css` and the module graph. Vite injects the hashed
+stylesheet and bundle tags at build time.
+
+**Images.** `src/lib/images.js` uses `import.meta.glob("../assets/img/*.jpg", { eager: true,
+query: "?url" })` to build a filename → hashed-URL map. Product records keep human-readable paths
+(`assets/img/sneaker-mocha.jpg`), and every render resolves them through `resolveImage()`. That
+single indirection keeps three things working at once:
+
+- merchant-entered relative paths and external `https://` URLs,
+- **records written by the pre-Vite site** (no migration step needed),
+- content-hashed, cache-busted filenames in production.
+
+**Fonts.** `main.css` references `../assets/fonts/*.woff2`, so Vite fingerprints and emits them.
+`assetsInlineLimit: 0` keeps every font and photo as a real hashed file instead of a base64 blob.
+
+**Preloads.** The hashed font names only exist after the build, so a small plugin
+(`fontPreload` in `vite.config.js`, `apply: "build"`) reads the emitted bundle and injects
+`<link rel="preload" as="font" type="font/woff2">` for the three first-paint faces (Bodoni Moda,
+Inter, UnifrakturCook) with the correct relative `href`s.
+
+**Base path.** `base: "./"` makes `dist/` portable — it works at a domain root, in a subdirectory,
+and behind the sandbox preview host without a rebuild.
+
+**Dev server.** `host: true` binds `0.0.0.0`, and `allowedHosts: true` + `cors: true` let the
+proxied preview origin load modules and hot updates.
+
+**Modules.** `window.CREE_SEED` and the two-script global pattern are gone. `catalog.js` exports
+`SEED` and `HERO_SLIDES`; `store.js` owns state and persistence; `lib/` holds pure functions; `ui/`
+holds DOM renderers. `app.js` wires them together and `store.subscribe()` keeps views in sync.
+
+---
+
+## Data & compatibility
+
+Storage keys are **unchanged** from the pre-Vite build, so an existing catalogue and cart carry over
+on first load:
+
+| Key | Contents |
+| --- | --- |
+| `creewrld.products.v1` | Full product array (seeded on first visit) |
+| `creewrld.cart.v1` | `[{ id, size, qty }]` |
+| `creewrld.zone.v1` | Selected delivery zone id |
+| `creewrld.session.v1` | `{ user, expires }` merchant session |
+
+Corrupt or empty stored data heals back to the seed catalogue rather than rendering an empty shop.
 
 ---
 
@@ -53,70 +134,84 @@ the page renders identically offline.
 | Secondary text | `#919191` |
 | Borders | `#1f1f1f` |
 
-- **Display / headlines** — Bodoni Moda (variable, Didone) with Playfair Display italic for
-  editorial emphasis.
+- **Display** — Bodoni Moda (variable Didone); Playfair Display italic for editorial emphasis.
 - **Body / UI** — Inter.
-- **Micro-labels, prices, badges** — JetBrains Mono at `0.15em–0.3em` tracking, uppercase.
-- **Wordmark** — UnifrakturCook (Gothic), subset to `A–Z` for a 4 KB payload.
+- **Micro-labels, prices, badges** — JetBrains Mono, `0.15em`–`0.3em` tracking, uppercase.
+- **Wordmark** — UnifrakturCook subset to `A–Z` (4 KB).
 
-### The monogram
+### Supplying the real logo
 
-`assets/logo/creewrld-monogram.svg` is not a font render: the `C` and `W` outlines were extracted
-from a blackletter source font, scaled to a shared cap height, overlapped so the `W` grows out of
-the `C`'s lower bowl, and finished with a hairline rule and diamond terminals. In the header it is
-sandwiched between three stacked faces (front, blurred ghost, mirrored back) inside a
-`perspective` container and spun with `rotateY(360deg)` — a continuous, smooth 3D rotation.
+The monogram at `public/assets/logo/creewrld-monogram.svg` is a **reconstruction** drawn from
+blackletter glyph outlines (the original brand file was not available). It is referenced from
+`index.html` in six places — three stacked faces for the 3D spin, plus the hero watermark and the
+footer mark.
 
----
+To swap in the real artwork, replace that file. Best results:
 
-## Features
+1. **Vector, transparent background** (SVG preferred) — just overwrite `creewrld-monogram.svg`,
+   keeping the filename. Nothing else changes.
+2. **Transparent PNG** — save it as `public/assets/logo/creewrld-monogram.png`, then:
 
-**Storefront**
-- Running marquee: *Based in Kenya · Free delivery within Nairobi · Nationwide shipping*.
-- Fixed header that condenses on scroll; mobile drawer navigation under 1024 px.
-- Editorial hero with a slow cross-fading product slideshow and index caption.
-- Category tabs (All Items, Sneakers, Streetwear, Old Money, Y2K) with live counts, keyboard
-  arrow support and `role="tab"` semantics.
-- Responsive product grid: 2 columns on phones, 3 on tablet/desktop, 4 from 1400 px.
-- Quick view with size selection, "Order", "Add to cart", and admin shortcuts.
+   ```bash
+   sed -i 's|creewrld-monogram.svg|creewrld-monogram.png|g' index.html
+   ```
 
-**Order flow (WhatsApp direct)**
-- Every card, quick view, cart line and cart summary uses a button labelled **Order**.
-- The Order modal collects **Full Name**, **Delivery Location**, **Phone Number** (plus zone) and
-  opens `https://wa.me/254719526649` with a formatted message containing:
-  - item title, price in KSh, size, condition tag and absolute image link;
-  - customer name, delivery location and contact phone;
-  - delivery zone, fee, subtotal, total and the *Free delivery within Nairobi* note.
-- Validation runs before dispatch; the success panel offers a fallback link if the tab is blocked.
+3. **A logo on a solid black/white background** will look wrong against the storefront. Either
+   re-export it with transparency, or ask for the `mix-blend-mode: screen` treatment
+   (`.brand__face img` in `src/styles/main.css`) to knock out a black backdrop.
 
-**Cart drawer**
-- Slide-over with quantity steppers, per-line Order buttons and removal.
-- Nairobi delivery selector: `Nairobi CBD / Westlands / Kilimani / Karen — Free`,
-  `Thika Road / Ruiru / Kiambu — KSh 200`, `Rest of Kenya — KSh 450`.
-- Subtotal, delivery and total recalculate instantly; zone choice persists.
-
-**Merchant tools**
-- `Login / Admin` opens the studio login (`admin` / `creewrld`).
-- `+ Add Product` opens the full product form (title, category, price in KSh, condition, sizes,
-  image URL with live preview, description) — gated behind the login.
-- While signed in, every card exposes Edit and Delete overlays, and a merchant strip offers new
-  product, catalogue reset and sign out.
-- Products, cart, zone and session persist in `localStorage` and sync across tabs.
-- The image URL is validated (no `javascript:`/`file:` values); broken URLs fall back to a branded
-  placeholder.
+Inverted/white-on-transparent artwork is what the dark UI expects; the header applies a soft
+`drop-shadow` glow that assumes a transparent plate.
 
 ---
 
-## Storage keys
+## Verification
 
-| Key | Contents |
-| --- | --- |
-| `creewrld.products.v1` | Full product array (seeded on first visit) |
-| `creewrld.cart.v1` | `[{ id, size, qty }]` |
-| `creewrld.zone.v1` | Selected delivery zone id |
-| `creewrld.session.v1` | `{ user, expires }` merchant session |
+`npm test` runs three layers, and the e2e layer targets the **built** output (`vite preview` on
+`dist/`), not the dev server:
 
-To restore the original ten pieces without signing in: clear those keys and reload.
+**Unit (Vitest, 48 assertions)** — currency formatting, HTML escaping, size parsing, delivery zone
+fees, customer validation (including the phone formats shoppers actually type), the exact WhatsApp
+payload, store CRUD, quantity caps, cart/ordered-line retirement, session expiry, subscriber
+notifications, cross-tab sync, and recovery from corrupt storage.
+
+**E2E (111 checks)** — a real Chromium session against `dist/`:
+
+- *Build integrity*: content-hashed JS/CSS, three font preloads pointing at hashed `.woff2` files
+  that return `200 font/woff2`, all four typefaces loaded via `document.fonts`, product photos
+  served from hashed URLs and decoded.
+- *Behaviour*: 10 cards, filters, order modal validation, the decoded `wa.me/254719526649` payload
+  (title, price, size, condition, absolute hashed image link, customer, free-delivery note),
+  delivery calculator (Free / KSh 200 / KSh 450), quantity steppers, cart-wide dispatch clearing the
+  cart, merchant login, add/edit/delete CRUD, persistence across reload.
+- *Legacy migration*: a pre-Vite `localStorage` record (plain `assets/img/...` path) still renders
+  and resolves to a hashed asset.
+- *Accessibility*: axe-core — zero violations on the home page, cart drawer, order modal and login
+  modal.
+- *Layout*: no horizontal overflow at 320/360/390/414/560/768/834/1024/1180/1280/1440/1920 px, with
+  the 2/3/4-column grid breakpoints asserted.
+- *Hygiene*: no console errors, no uncaught page errors, no 404s or failed requests.
+
+**Running the e2e suite.** It needs a Chrome binary. Defaults are auto-detected; otherwise:
+
+```bash
+PUPPETEER_EXECUTABLE_PATH=/path/to/chrome npm run test:e2e
+# or install one: npx puppeteer browsers install chrome
+```
+
+If Chrome is missing the suite exits with a clear message instead of a false pass. In CI, run
+`npm ci && npx puppeteer browsers install chrome && npm test`.
+
+---
+
+## Deployment
+
+The output is a static folder — host `dist/` anywhere (Netlify, Vercel, Cloudflare Pages, GitHub
+Pages, S3, nginx). Because there is a single route, no SPA rewrite is required; if you later add
+routing, add a fallback to `index.html`.
+
+`server.js` from the pre-Vite version is gone: use `npm run dev` locally and `npm run preview` to
+inspect a production build.
 
 ---
 
@@ -124,17 +219,12 @@ To restore the original ten pieces without signing in: clear those keys and relo
 
 This is a front-end storefront, deliberately backend-free:
 
-1. **Admin auth is client-side.** The gate keeps shoppers out of the merchant UI, but anyone can
-   read the credentials in `assets/js/app.js`. Before exposing inventory management publicly, move
-   products and auth behind a real backend (e.g. Supabase, Firebase, or a small Node API) and
-   server-render the catalogue for SEO.
-2. **Inventory lives per-browser.** Edits are saved in `localStorage`, so they are visible on the
-   device that made them. A shared backend is required for a catalogue that all customers see.
-3. **Images** are local files today. Uploads should go to object storage (S3/Cloudinary) so image
-   links in WhatsApp messages resolve publicly.
-4. **WhatsApp number** is defined once, in `CONFIG.whatsapp` in `assets/js/app.js`.
-5. Prices are integers in KSh and formatted with `toLocaleString("en-KE")`.
-
-Accessibility: semantic landmarks, labelled controls, focus trapping and restoration in the drawer
-and modals, visible focus rings, `prefers-reduced-motion` support. Verified with axe-core — zero
-violations on the home page, cart drawer and login modal.
+1. **Admin auth is client-side.** The gate keeps shoppers out of the merchant UI, but the
+   credentials live in `src/config.js` and are bundled. Move products and auth behind a real backend
+   (Supabase, Firebase, or a small Node API) before exposing inventory management publicly.
+2. **Inventory is per-browser.** Edits live in `localStorage`, so they are visible on the device that
+   made them. A shared backend is required for a catalogue every customer sees.
+3. **Images.** Bundled photos are hashed at build time; merchant-entered URLs should point at object
+   storage (S3/Cloudinary) so the links inside WhatsApp messages resolve publicly.
+4. **WhatsApp number** is defined once: `CONFIG.whatsapp` in `src/config.js`.
+5. Prices are integers in KSh, formatted with `toLocaleString("en-KE")`.
