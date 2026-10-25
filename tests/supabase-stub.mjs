@@ -154,7 +154,24 @@ export function createSupabaseStub({ email = "owner@creewrld.test", password = "
       const grant = url.searchParams.get("grant_type");
       if (grant === "password") {
         const { email: givenEmail, password: givenPassword } = body || {};
-        if (String(givenEmail).trim().toLowerCase() !== email.toLowerCase() || givenPassword !== password) {
+        const given = String(givenEmail).trim().toLowerCase();
+
+        // A second kind of refusal, so the UI's mapping can be tested: the
+        // account exists but was never confirmed. Supabase answers 400 with
+        // code "email_not_confirmed" and this manager-owned test account.
+        if (given === "unconfirmed@creewrld.test") {
+          return json(
+            {
+              code: "email_not_confirmed",
+              error: "email_not_confirmed",
+              error_description: "Email not confirmed",
+              msg: "Email not confirmed"
+            },
+            400
+          );
+        }
+
+        if (given !== email.toLowerCase() || givenPassword !== password) {
           return json({ error: "invalid_grant", error_description: "Invalid login credentials", msg: "Invalid login credentials" }, 400);
         }
         state.signedIn = true;

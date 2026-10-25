@@ -570,14 +570,31 @@ async function run() {
     // Deliberately messy input: leading/trailing spaces and mixed case.
     await fill(page, "#lfEmail", "  Owner@CreeWRLD.TEST ");
     await fill(page, "#lfPass", "wrong-password");
-    await submit(page, "#loginForm");
-    await wait(600);
+
+    // The button must show that the request is in flight, so read it in the same
+    // tick as the submit — before the stub has had a chance to answer.
+    const busy = await page.evaluate(() => {
+      document.querySelector("#loginForm").dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true })
+      );
+      const button = document.querySelector("#loginSubmit");
+      return { disabled: button.disabled, label: button.textContent, busy: button.getAttribute("aria-busy") };
+    });
+    ok("the submit button is disabled while signing in", busy.disabled === true, JSON.stringify(busy));
+    ok("the button says it is working", busy.label === "Signing in…", busy.label);
+    ok("the busy state is announced", busy.busy === "true", String(busy.busy));
+
+    await wait(700);
     ok("wrong password is rejected by Supabase Auth", await isVisible(page, "#loginError"));
     ok(
-      "the refusal names the Gmail address",
+      "the refusal is the Gmail/password sentence",
       (await text(page, "#loginError")) ===
-        "That Gmail address or password doesn't match an authorized studio account.",
+        "Invalid Gmail or password. Please verify your credentials or confirm the account in the Supabase Dashboard.",
       await text(page, "#loginError")
+    );
+    ok(
+      "the button returns to its resting label",
+      (await page.evaluate(() => document.querySelector("#loginSubmit").textContent)) === "Enter studio"
     );
     ok(
       "the error is styled as a panel, not a bare hint",
@@ -606,14 +623,36 @@ async function run() {
       (await page.evaluate(() => document.body.classList.contains("is-admin"))) === false
     );
 
-    await fill(page, "#lfEmail", "OWNER@creewrld.TEST");
+    // An account that exists but was never confirmed gets the same sentence as a
+    // wrong password — the form cannot tell them apart, and the Dashboard can.
+    await fill(page, "#lfEmail", "unconfirmed@creewrld.test");
     await fill(page, "#lfPass", "creewrld");
     await submit(page, "#loginForm");
-    await wait(800);
-    ok("a Gmail address typed in any case signs in", await isVisible(page, "#loginError") === false);
+    await wait(600);
+    ok(
+      "an unconfirmed account gets the same refusal",
+      (await text(page, "#loginError")) ===
+        "Invalid Gmail or password. Please verify your credentials or confirm the account in the Supabase Dashboard.",
+      await text(page, "#loginError")
+    );
+
+    // Submitting again must clear the previous message, not stack next to it.
+    await fill(page, "#lfEmail", "OWNER@creewrld.TEST");
+    await fill(page, "#lfPass", "creewrld");
+    const cleared = await page.evaluate(() => {
+      const form = document.querySelector("#loginForm");
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      const node = document.querySelector("#loginError");
+      return { text: node.textContent, hidden: node.hidden };
+    });
+    ok("a new attempt clears the previous error text", cleared.text === "", cleared.text);
+    ok("a new attempt hides the previous error", cleared.hidden === true);
+
+    await wait(900);
     ok("merchant mode enabled", (await page.evaluate(() => document.body.classList.contains("is-admin"))) === true);
+    ok("the login modal closed itself on sign-in", (await isVisible(page, "#loginModal")) === false);
     ok("merchant strip appears", await isVisible(page, "#merchantBar"));
-    ok("header reflects the signed-in email", (await text(page, "#loginBtnLabel")) === "Studio · owner", await text(page, "#loginBtnLabel"));
+    ok("the header link becomes LOGOUT", (await text(page, "#loginBtnLabel")) === "Logout", await text(page, "#loginBtnLabel"));
     ok(
       "sign-in went through the password grant",
       stub.calls().some((call) => call.path === "/auth/v1/token" && /grant_type=password/.test(call.query))
@@ -781,6 +820,39 @@ async function run() {
     );
     stub.state.offline = false;
     await second.page.close();
+
+    /* --------------------------------------------------------------- sign out */
+    section("Sign out");
+    ok("the header link reads LOGOUT while signed in", (await text(page, "#loginBtnLabel")) === "Logout", await text(page, "#loginBtnLabel"));
+    ok("the mobile menu offers the same way out", (await text(page, "#mobileLogin")) === "Logout", await text(page, "#mobileLogin"));
+
+    await click(page, "#loginBtn");
+    await wait(900);
+    ok("LOGOUT ends the session", (await page.evaluate(() => document.body.classList.contains("is-admin"))) === false);
+    ok("the header link reverts to LOGIN / ADMIN", (await text(page, "#loginBtnLabel")) === "Login / Admin", await text(page, "#loginBtnLabel"));
+    ok("the mobile menu reverts too", (await text(page, "#mobileLogin")) === "Login / Admin", await text(page, "#mobileLogin"));
+    ok("the merchant strip disappears", (await isVisible(page, "#merchantBar")) === false);
+    ok(
+      "card controls are hidden from the public again",
+      (await page.evaluate(() => window.getComputedStyle(document.querySelector(".card__admin")).visibility)) !== "visible"
+    );
+    ok(
+      "sign-out called the auth endpoint",
+      stub.calls().some((call) => call.path === "/auth/v1/logout"),
+      stub.calls().filter((call) => /auth/.test(call.path)).map((call) => call.path).join(", ")
+    );
+    ok(
+      "no session is left in storage",
+      (await page.evaluate(() => !localStorage.getItem("creewrld.auth.v2")))
+    );
+
+    // Signed out, the header link opens the modal again.
+    await click(page, "#loginBtn");
+    await wait(300);
+    ok("the signed-out link reopens the login modal", await isVisible(page, "#loginModal"));
+    await click(page, "#loginModal [data-close]");
+    await wait(300);
+
 
     /* ------------------------------------------------ typography & contrast */
     section("Typography & contrast");

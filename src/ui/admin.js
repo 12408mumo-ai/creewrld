@@ -23,7 +23,7 @@ import {
 import { selectCategory } from "./grid.js";
 import { closeLayer, openLayer, toast } from "./layers.js";
 import { uploadProductImage, validateImage } from "../data/storage.js";
-import { CREDENTIALS_ERROR, normalizeEmail } from "../data/auth.js";
+import { NETWORK_ERROR, normalizeEmail } from "../data/auth.js";
 import { describeError } from "../lib/supabase.js";
 
 const loginModal = () => $("#loginModal");
@@ -43,19 +43,24 @@ export function applyAdminChrome() {
   const bar = $("#merchantBar");
   if (bar) bar.hidden = !state.admin;
 
+  // Signed in, the header link becomes the way out. Out, it opens the modal.
   const label = $("#loginBtnLabel");
-  if (label) {
-    const email = state.user && state.user.email ? state.user.email.split("@")[0] : "";
-    label.textContent = state.admin ? (email ? `Studio · ${email}` : "Studio · admin") : "Login / Admin";
-  }
+  if (label) label.textContent = state.admin ? "Logout" : "Login / Admin";
+
+  const mobileLabel = $("#mobileLogin");
+  if (mobileLabel) mobileLabel.textContent = state.admin ? "Logout" : "Login / Admin";
 
   const loginBtn = $("#loginBtn");
   if (loginBtn) {
     loginBtn.setAttribute(
       "aria-label",
-      state.admin ? "Signed in to the studio — sign out" : "Login / Admin"
+      state.admin ? "Log out of studio mode" : "Login / Admin"
     );
   }
+
+  // A session that arrives while the modal is open (another tab, a restored
+  // session, a refreshed token) means the form has nothing left to ask for.
+  if (state.admin) closeLayer(loginModal());
 
   $$(".qv__admin").forEach((node) => {
     node.hidden = !state.admin;
@@ -103,6 +108,7 @@ const setLoginBusy = (busy) => {
   if (!submit) return;
   submit.disabled = busy || !state.configured;
   submit.textContent = busy ? "Signing in…" : "Enter studio";
+  submit.setAttribute("aria-busy", busy ? "true" : "false");
 };
 
 async function handleLogin(event) {
@@ -118,6 +124,10 @@ async function handleLogin(event) {
   // Show the normalised address, so what is on screen is what was sent.
   if (field.value !== email) field.value = email;
 
+  // Clear whatever the last attempt said, text and all, before this one runs.
+  error.textContent = "";
+  error.hidden = true;
+
   if (!email || !password) {
     error.hidden = false;
     error.textContent = "Enter your studio Gmail address and password.";
@@ -125,13 +135,12 @@ async function handleLogin(event) {
   }
 
   setLoginBusy(true);
-  error.hidden = true;
 
   let result;
   try {
     result = await signIn(email, password);
   } catch (err) {
-    result = { ok: false, error: describeError(err, CREDENTIALS_ERROR) };
+    result = { ok: false, error: describeError(err, NETWORK_ERROR) };
   } finally {
     setLoginBusy(false);
   }
@@ -387,21 +396,6 @@ export function confirmSeed() {
   );
 }
 
-export function confirmSignOut() {
-  askConfirm(
-    {
-      title: "Sign out of <em>merchant mode</em>",
-      text: "The storefront returns to shopper view. Your pieces stay in the live catalogue.",
-      confirmLabel: "Sign out",
-      danger: false
-    },
-    async () => {
-      await signOut();
-      toast("Signed out of merchant mode");
-    }
-  );
-}
-
 /* ----------------------------------------------------------------- binding */
 
 const on = (selector, handler) => {
@@ -431,9 +425,15 @@ export function bindAdmin() {
     }
   });
 
-  on("#loginBtn", () => {
-    if (state.admin) confirmSignOut();
-    else openLogin();
+  // One control, two jobs — exactly as the label says: LOGIN / ADMIN opens the
+  // modal, LOGOUT ends the session.
+  on("#loginBtn", async () => {
+    if (!state.admin) {
+      openLogin();
+      return;
+    }
+    await signOut();
+    toast("Signed out of merchant mode");
   });
   on("#mobileLogin", async () => {
     if (state.admin) {
