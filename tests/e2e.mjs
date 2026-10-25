@@ -10,17 +10,36 @@
  * overflow from 320px to 1920px.
  */
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import puppeteer from "puppeteer-core";
+import { createSupabaseStub, STUB_ANON_KEY, STUB_ORIGIN } from "./supabase-stub.mjs";
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(import.meta.dirname, "..");
 const PORT = Number(process.env.E2E_PORT || 4319);
 const BASE = `http://127.0.0.1:${PORT}/`;
+
+/**
+ * The suite runs the real production build against a stubbed Supabase project:
+ * the bundle contains the real @supabase/supabase-js client and no test hooks,
+ * and every request it makes is answered by tests/supabase-stub.mjs.
+ */
+const stub = createSupabaseStub();
+
+/** A real PNG on disk, so the file input exercises the actual upload path. */
+const TEST_IMAGE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "creewrld-")), "trucker.png");
+fs.writeFileSync(
+  TEST_IMAGE,
+  Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==",
+    "base64"
+  )
+);
 
 let checks = 0;
 let failures = 0;
@@ -41,6 +60,21 @@ function section(title) {
 }
 
 /* ------------------------------------------------------------------ preview */
+
+function buildForStub() {
+  const vite = path.join(ROOT, "node_modules", ".bin", process.platform === "win32" ? "vite.cmd" : "vite");
+  console.log("\n\u001b[2mBuilding with the Supabase stub credentials…\u001b[0m");
+  execFileSync(vite, ["build", "--logLevel", "warn"], {
+    cwd: ROOT,
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      VITE_SUPABASE_URL: STUB_ORIGIN,
+      VITE_SUPABASE_ANON_KEY: STUB_ANON_KEY,
+      VITE_SUPABASE_REALTIME: "off"
+    }
+  });
+}
 
 function startPreview() {
   const vite = path.join(ROOT, "node_modules", ".bin", process.platform === "win32" ? "vite.cmd" : "vite");
@@ -136,11 +170,26 @@ async function openPage(browser) {
     if (response.status() >= 400) errors.requests.push(response.status() + " " + response.url());
   });
 
+  await stub.attach(page);
+
   await page.evaluateOnNewDocument(() => {
     window.__opened = [];
+    window.__navigated = [];
+    // The app claims a tab during the click gesture and points it at WhatsApp
+    // once the order is logged, so the stub records both steps.
     window.open = (url) => {
       window.__opened.push(url);
-      return { focus() {} };
+      return {
+        focus() {},
+        closed: false,
+        location: {
+          assign: (target) => window.__navigated.push(target),
+          replace: (target) => window.__navigated.push(target),
+          set href(target) {
+            window.__navigated.push(target);
+          }
+        }
+      };
     };
   });
 
@@ -148,6 +197,20 @@ async function openPage(browser) {
   await wait(700);
 
   return { page, errors };
+}
+
+/** Poll until a condition holds (for network-dependent state). */
+async function until(fn, timeoutMs = 12000, interval = 150) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    try {
+      if (await fn()) return true;
+    } catch (err) {
+      /* keep polling */
+    }
+    await wait(interval);
+  }
+  return false;
 }
 
 const text = (page, selector) =>
@@ -204,6 +267,7 @@ async function axeViolations(page) {
 /* -------------------------------------------------------------------- suite */
 
 async function run() {
+  buildForStub();
   const preview = startPreview();
   const stopPreview = () => {
     if (!preview.killed) preview.kill("SIGTERM");
@@ -308,9 +372,16 @@ async function run() {
 
     /* ----------------------------------------------------------------- boot */
     section("Storefront render");
-    ok("10 product cards render", (await count(page, ".card")) === 10, String(await count(page, ".card")));
+    ok("live catalogue renders one card per row", (await count(page, ".card")) === 5, String(await count(page, ".card")));
+    ok("result count reflects the database", (await text(page, "#resultCount")) === "5 pieces", await text(page, "#resultCount"));
     ok("cart badge starts at 0", (await text(page, "#cartCount")) === "0");
-    ok("5 category tabs render", (await count(page, ".filter")) === 5);
+    ok("category tabs are built from the categories table", (await count(page, ".filter")) === 5);
+    ok(
+      "tab labels come from the database",
+      (await page.evaluate(() => Array.from(document.querySelectorAll(".filter")).map((f) => f.dataset.filter))).join(",") ===
+        "All Items,Sneakers,Streetwear,Old Money,Y2K"
+    );
+    ok("no data notice when the query succeeds", (await page.evaluate(() => document.querySelector("#dataNotice").hidden)) === true);
     ok("hero lookbook has 4 slides", (await count(page, "#heroSlides img")) === 4);
     ok("announcement marquee carries the delivery promise", /free delivery within nairobi/i.test((await text(page, ".announce")) || ""));
     ok("spinning monogram is present", await isVisible(page, ".brand__spinner img"));
@@ -333,12 +404,12 @@ async function run() {
     section("Category filtering");
     await click(page, '[data-filter="Y2K"]');
     await wait(150);
-    ok("Y2K shows 2 pieces", (await count(page, ".card")) === 2, String(await count(page, ".card")));
+    ok("Y2K shows 1 piece", (await count(page, ".card")) === 1, String(await count(page, ".card")));
     ok("Y2K tab is selected", (await page.evaluate(() => document.querySelector('[data-filter="Y2K"]').getAttribute("aria-selected"))) === "true");
-    ok("filter count reads 10 for All Items", /10/.test((await text(page, '[data-filter="All Items"]')) || ""));
+    ok("filter count reads 05 for All Items", /05/.test((await text(page, '[data-filter="All Items"]')) || ""), await text(page, '[data-filter="All Items"]'));
     await click(page, '[data-filter="All Items"]');
     await wait(120);
-    ok("All Items restores 10 pieces", (await count(page, ".card")) === 10);
+    ok("All Items restores every piece", (await count(page, ".card")) === 5);
 
     /* ------------------------------------------------------------ order flow */
     section("Order flow (single piece)");
@@ -352,7 +423,10 @@ async function run() {
     await submit(page, "#orderForm");
     await wait(150);
     ok("validation blocks an empty form", (await count(page, "#orderModal .field.has-error")) > 0);
-    ok("no WhatsApp tab opens on invalid submit", (await page.evaluate(() => window.__opened.length)) === 0);
+    ok(
+      "no WhatsApp tab opens on invalid submit",
+      (await page.evaluate(() => window.__opened.length + window.__navigated.length)) === 0
+    );
 
     await fill(page, "#ofName", "Amina Otieno");
     await fill(page, "#ofLocation", "Kilimani, Nairobi");
@@ -361,8 +435,10 @@ async function run() {
     await wait(250);
 
     const opened = await page.evaluate(() => window.__opened);
-    ok("WhatsApp tab opened exactly once", opened.length === 1, JSON.stringify(opened));
-    const waUrl = opened[0] || "";
+    const navigated = await page.evaluate(() => window.__navigated);
+    ok("a tab is claimed once, inside the click gesture", opened.length === 1, JSON.stringify(opened));
+    ok("the claimed tab is pointed at WhatsApp once", navigated.length === 1, JSON.stringify(navigated));
+    const waUrl = navigated[0] || opened.find((url) => url.startsWith("https://wa.me/")) || "";
     ok("dispatch targets wa.me/254719526649", waUrl.startsWith("https://wa.me/254719526649?text="), waUrl.slice(0, 64));
     const message = decodeURIComponent((waUrl.split("?text=")[1] || "").replace(/\+/g, " "));
     ok("payload includes the item title", message.includes("Mocha Suede High-Top"));
@@ -379,6 +455,37 @@ async function run() {
     ok("payload includes the contact phone", /Contact Phone: 0712 345 678/.test(message));
     ok("payload includes the free-delivery note", message.includes("Free delivery within Nairobi."));
     ok("success panel replaces the form", (await isVisible(page, "#orderSuccess")) && !(await isVisible(page, "#orderForm")));
+
+    const logged = stub.orders()[0];
+    ok("order was inserted into the orders table", stub.orders().length === 1, String(stub.orders().length));
+    ok(
+      "order row carries the customer details",
+      logged && logged.customer_name === "Amina Otieno" &&
+        logged.phone === "0712 345 678" &&
+        logged.delivery_location === "Kilimani, Nairobi",
+      JSON.stringify(logged && { name: logged.customer_name, phone: logged.phone, where: logged.delivery_location })
+    );
+    ok(
+      "order row carries the money in KSh",
+      logged && logged.subtotal === 6500 && logged.zone_fee === 0 && logged.total === 6500,
+      JSON.stringify(logged && { subtotal: logged.subtotal, fee: logged.zone_fee, total: logged.total })
+    );
+    ok(
+      "order row snapshots the line items",
+      logged && Array.isArray(logged.items) && logged.items[0].title === "Mocha Suede High-Top" &&
+        logged.items[0].size === "41" && logged.items[0].price === 6500,
+      JSON.stringify(logged && logged.items && logged.items[0])
+    );
+    ok(
+      "order row records the delivery zone",
+      logged && logged.zone === "nairobi-core" && logged.zone_label.includes("Nairobi"),
+      JSON.stringify(logged && { zone: logged.zone, label: logged.zone_label })
+    );
+    ok(
+      "order is logged before the WhatsApp tab opens",
+      stub.calls().some((call) => call.method === "POST" && call.path === "/rest/v1/orders"),
+      stub.calls().map((c) => c.method + " " + c.path).join(", ")
+    );
     console.log("\n\u001b[2m--- WhatsApp payload ---\n" + message + "\n------------------------\u001b[0m");
     await click(page, "#orderDone");
     await wait(600); // dismissed over a 400ms visibility transition
@@ -440,26 +547,38 @@ async function run() {
     await wait(200);
 
     /* ------------------------------------------------------------------ admin */
-    section("Merchant mode");
+    section("Merchant mode (Supabase Auth)");
     ok("admin overlays are hidden for shoppers", (await page.evaluate(() => window.getComputedStyle(document.querySelector(".card__admin")).visibility)) !== "visible");
+    ok("no add-product control in the shopper header", (await count(page, ".actions #merchantAdd")) === 0);
+    ok("the merchant strip is hidden while signed out", (await isVisible(page, "#merchantBar")) === false);
 
     await click(page, "#loginBtn");
     await wait(250);
     ok("login modal opens", await isVisible(page, "#loginModal"));
-    await fill(page, "#lfUser", "admin");
-    await fill(page, "#lfPass", "nope");
-    await submit(page, "#loginForm");
-    await wait(150);
-    ok("wrong password is rejected", await isVisible(page, "#loginError"));
+    ok("login asks for an email, not a username", (await page.evaluate(() => document.querySelector("#lfEmail").type)) === "email");
 
-    await fill(page, "#lfUser", "admin");
+    await fill(page, "#lfEmail", "owner@creewrld.test");
+    await fill(page, "#lfPass", "wrong-password");
+    await submit(page, "#loginForm");
+    await wait(600);
+    ok("wrong password is rejected by Supabase Auth", await isVisible(page, "#loginError"));
+    ok(
+      "a rejected sign-in leaves the shopper view intact",
+      (await page.evaluate(() => document.body.classList.contains("is-admin"))) === false
+    );
+
+    await fill(page, "#lfEmail", "owner@creewrld.test");
     await fill(page, "#lfPass", "creewrld");
     await submit(page, "#loginForm");
-    await wait(400);
+    await wait(800);
     ok("merchant mode enabled", (await page.evaluate(() => document.body.classList.contains("is-admin"))) === true);
     ok("merchant strip appears", await isVisible(page, "#merchantBar"));
-    ok("header reflects the session", (await text(page, "#loginBtnLabel")) === "Studio · admin");
-    ok("session is persisted", (await page.evaluate(() => Boolean(localStorage.getItem("creewrld.session.v1")))) === true);
+    ok("header reflects the signed-in email", (await text(page, "#loginBtnLabel")) === "Studio · owner", await text(page, "#loginBtnLabel"));
+    ok(
+      "sign-in went through the password grant",
+      stub.calls().some((call) => call.path === "/auth/v1/token" && /grant_type=password/.test(call.query))
+    );
+    ok("no merchant flag is written to localStorage", (await page.evaluate(() => !localStorage.getItem("creewrld.session.v1"))));
     await wait(300);
     ok("edit overlays become visible", (await page.evaluate(() => {
       const node = document.querySelector(".card__admin");
@@ -470,28 +589,57 @@ async function run() {
     await click(page, "#merchantAdd");
     await wait(300);
     ok("add-product form opens for the merchant", await isVisible(page, "#productModal"));
+    ok("the form offers a file upload", await isVisible(page, "#pfFile"));
 
     await fill(page, "#pfTitle", "Selvedge Trucker");
     await page.select("#pfCategory", "Streetwear");
     await fill(page, "#pfPrice", "5400");
     await page.select("#pfCondition", "Like New");
     await fill(page, "#pfSizes", "M, L, XL");
-    await fill(page, "#pfImage", "assets/img/bomber-varsity.jpg");
     await fill(page, "#pfDescription", "Indigo selvedge denim trucker with copper rivets.");
-    await wait(350);
-    ok("image preview renders", await isVisible(page, "#pfPreview img"));
+
+    const fileInput = await page.$("#pfFile");
+    await fileInput.uploadFile(TEST_IMAGE);
+    await wait(400);
+    ok("chosen file previews before upload", await isVisible(page, "#pfPreview img"));
 
     await submit(page, "#productForm");
-    await wait(450);
+    await wait(1400);
     ok("publishing jumps to the new category", (await page.evaluate(() => document.querySelector('[data-filter="Streetwear"]').getAttribute("aria-selected"))) === "true");
-    ok("Streetwear grid now holds 4 pieces", (await count(page, ".card")) === 4, String(await count(page, ".card")));
+    ok("Streetwear grid now holds 2 pieces", (await count(page, ".card")) === 2, String(await count(page, ".card")));
     ok("newest piece leads the grid", /Selvedge Trucker/.test((await text(page, ".card .card__title")) || ""));
-    ok("new piece resolves a hashed image", /assets\/bomber-varsity-[\w-]+\.jpg/.test(await page.evaluate(() => document.querySelector(".card__media img").getAttribute("src"))));
-    ok("catalogue persists to localStorage", (await page.evaluate(() => JSON.parse(localStorage.getItem("creewrld.products.v1")).length)) === 11);
+
+    const upload = stub.calls().find((call) => call.method === "POST" && call.path.startsWith("/storage/v1/object/product-images/"));
+    ok("image uploaded to the product-images bucket", Boolean(upload), stub.calls().map((c) => c.path).join(", "));
+    ok(
+      "upload path is a slug plus a random suffix",
+      upload && /^\/storage\/v1\/object\/product-images\/selvedge-trucker-[a-z0-9]+\.png$/.test(upload.path),
+      upload && upload.path
+    );
+
+    const inserted = stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker");
+    ok("piece inserted into the products table", Boolean(inserted));
+    ok(
+      "stored image_url is the Supabase public URL",
+      inserted && /^https:\/\/stub\.supabase\.co\/storage\/v1\/object\/public\/product-images\/selvedge-trucker-[a-z0-9]+\.png$/.test(inserted.image_url),
+      inserted && inserted.image_url
+    );
+    ok(
+      "insert wrote the resolved category id, not a name",
+      inserted && inserted.category_id === "c-streetwear",
+      inserted && inserted.category_id
+    );
+    ok("insert sent the KSh price as an integer", inserted && inserted.price === 5400, inserted && String(inserted.price));
+    ok("insert sent the size run as an array", inserted && Array.isArray(inserted.sizes) && inserted.sizes.join(",") === "M,L,XL");
+    ok("no catalogue copy was written to localStorage", (await page.evaluate(() => !localStorage.getItem("creewrld.products.v1"))));
+    ok(
+      "the stored image renders from storage",
+      /storage\/v1\/object\/public\/product-images/.test(await page.evaluate(() => document.querySelector(".card__media img").getAttribute("src")))
+    );
 
     await click(page, '[data-filter="All Items"]');
     await wait(200);
-    ok("All Items now lists 11 pieces", (await count(page, ".card")) === 11, String(await count(page, ".card")));
+    ok("All Items now lists 6 pieces", (await count(page, ".card")) === 6, String(await count(page, ".card")));
 
     await click(page, ".card [data-edit]");
     await wait(300);
@@ -499,17 +647,28 @@ async function run() {
       (await page.evaluate(() => document.querySelector("#pfPrice").value)) === "5400");
     await fill(page, "#pfPrice", "3900");
     await submit(page, "#productForm");
-    await wait(400);
+    await wait(900);
     ok("edited price re-renders", (await text(page, ".card .card__price")) === "KSh 3,900", await text(page, ".card .card__price"));
-    ok("edit keeps the original id", (await page.evaluate(() => JSON.parse(localStorage.getItem("creewrld.products.v1")).length)) === 11);
+    ok(
+      "edit issued a PATCH scoped to that row",
+      stub.calls().some((call) => call.method === "PATCH" && call.path === "/rest/v1/products" && /id=eq\./.test(call.query)),
+      stub.calls().filter((c) => c.method === "PATCH").map((c) => c.query).join(", ")
+    );
+    ok("edit kept the row id", stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.id === inserted.id);
+    ok("edit did not duplicate the row", stub.rows().filter((rowDB) => rowDB.title === "Selvedge Trucker").length === 1);
 
     await click(page, ".card [data-delete]");
     await wait(250);
     ok("delete asks for confirmation", await isVisible(page, "#confirmModal"));
     await click(page, "#confirmYes");
-    await wait(400);
-    ok("piece is removed from the grid", (await count(page, ".card")) === 10, String(await count(page, ".card")));
-    ok("piece is removed from storage", (await page.evaluate(() => JSON.parse(localStorage.getItem("creewrld.products.v1")).length)) === 10);
+    await wait(900);
+    ok("piece is removed from the grid", (await count(page, ".card")) === 5, String(await count(page, ".card")));
+    ok(
+      "delete issued a DELETE on that row",
+      stub.calls().some((call) => call.method === "DELETE" && call.path === "/rest/v1/products"),
+      stub.calls().filter((c) => c.method === "DELETE").map((c) => c.query).join(", ")
+    );
+    ok("row is gone from the table", !stub.rows().some((rowDB) => rowDB.title === "Selvedge Trucker"));
 
     /* ------------------------------------------------------------ persistence */
     section("Persistence across reload");
@@ -523,48 +682,65 @@ async function run() {
     await wait(150);
 
     await page.reload({ waitUntil: "networkidle0" });
-    await wait(700);
-    ok("cart survives a reload", (await text(page, "#cartCount")) === "1", await text(page, "#cartCount"));
+    await wait(900);
+    ok("cart survives a reload (device-local)", (await text(page, "#cartCount")) === "1", await text(page, "#cartCount"));
     ok("delivery zone survives a reload", (await page.evaluate(() => document.querySelector("#cartZone").value)) === "nairobi-outer");
     ok("merchant session survives a reload", (await page.evaluate(() => document.body.classList.contains("is-admin"))) === true);
-    ok("catalogue survives a reload", (await count(page, ".card")) === 10);
+    ok("catalogue is re-read from the database", (await count(page, ".card")) === 5, String(await count(page, ".card")));
+    ok(
+      "no products or session keys are left in localStorage",
+      (await page.evaluate(() => [localStorage.getItem("creewrld.products.v1"), localStorage.getItem("creewrld.session.v1")])) .every((value) => value === null)
+    );
 
-    /* ------------------------------------------------- legacy data migration */
-    section("Legacy data migration (pre-Vite localStorage)");
-    await page.evaluate(() => {
-      localStorage.setItem(
-        "creewrld.products.v1",
-        JSON.stringify([
-          {
-            id: "cw-legacy",
-            title: "Legacy Mocha High-Top",
-            category: "Sneakers",
-            price: 6100,
-            condition: "Excellent",
-            sizes: ["41", "42"],
-            image: "assets/img/sneaker-mocha.jpg",
-            description: "Record written by the pre-Vite storefront."
-          }
-        ])
-      );
-      localStorage.setItem("creewrld.cart.v1", JSON.stringify([{ id: "cw-legacy", size: "41", qty: 2 }]));
-    });
-    await page.reload({ waitUntil: "networkidle0" });
-    await wait(700);
+    /* ------------------------------------------- resilience & starter catalogue */
+    section("Backend resilience");
+    const second = await openPage(browser);
 
-    const migrated = await page.evaluate(() => {
-      const img = document.querySelector(".card__media img");
-      return {
-        count: document.querySelectorAll(".card").length,
-        src: img?.getAttribute("src"),
-        width: img?.naturalWidth,
-        cart: document.querySelector("#cartCount").textContent
-      };
-    });
-    ok("legacy records still load", migrated.count === 1, String(migrated.count));
-    ok("legacy image path resolves to a hashed asset", /assets\/sneaker-mocha-[\w-]+\.jpg/.test(migrated.src || ""), migrated.src);
-    ok("legacy product image decodes", migrated.width > 0, String(migrated.width));
-    ok("legacy cart lines still resolve", migrated.cart === "2", migrated.cart);
+    // Empty table -> the merchant can seed the starter catalogue.
+    stub.state.products = [];
+    await second.page.reload({ waitUntil: "networkidle0" });
+    await wait(900);
+    ok("an empty table shows the empty state", await isVisible(second.page, "#emptyState"));
+    ok("the starter-catalogue control appears for the merchant", await isVisible(second.page, "#merchantSeed"));
+
+    await click(second.page, "#merchantSeed");
+    await wait(300);
+    await click(second.page, "#confirmYes");
+    await wait(1500);
+    const seeded = stub.rows();
+    ok("starter catalogue inserted ten pieces", seeded.length === 10, String(seeded.length));
+    ok("seeded pieces keep their bundled image paths", seeded.every((rowDB) => rowDB.image_url.startsWith("assets/img/")), seeded[0] && seeded[0].image_url);
+    ok("seeded grid renders all ten", (await second.page.$$(".card")).length === 10, String((await second.page.$$(".card")).length));
+
+    // A write rejected by RLS must surface, not silently "succeed".
+    stub.state.failNextWrite = 'new row violates row-level security policy for table "products"';
+    await click(second.page, "#merchantAdd");
+    await wait(300);
+    await fill(second.page, "#pfTitle", "Blocked Piece");
+    await fill(second.page, "#pfPrice", "1200");
+    await fill(second.page, "#pfSizes", "M");
+    await fill(second.page, "#pfImage", "assets/img/cargo-street.jpg");
+    await fill(second.page, "#pfDescription", "Should never be inserted.");
+    await submit(second.page, "#productForm");
+    await wait(900);
+    ok("a rejected write keeps the form open", await isVisible(second.page, "#productModal"));
+    ok("a rejected write shows a readable error", await isVisible(second.page, ".toast"));
+    ok("nothing was inserted", stub.rows().length === 10, String(stub.rows().length));
+    await click(second.page, "#productModal [data-close]");
+    await wait(300);
+
+    // Unreachable backend: the storefront explains itself instead of looking empty.
+    stub.state.offline = true;
+    await second.page.reload({ waitUntil: "domcontentloaded" });
+    await until(async () => /reach/i.test((await text(second.page, "#dataNotice")) || ""), 15000);
+    ok("an unreachable backend raises the data notice", await isVisible(second.page, "#dataNotice"));
+    ok(
+      "the notice explains the problem",
+      /can't reach|can’t reach|couldn't|couldn’t/i.test((await text(second.page, "#dataNotice")) || ""),
+      await text(second.page, "#dataNotice")
+    );
+    stub.state.offline = false;
+    await second.page.close();
 
     /* ------------------------------------------------ typography & contrast */
     section("Typography & contrast");
@@ -760,12 +936,22 @@ async function run() {
 
     /* --------------------------------------------------------------- errors */
     section("Runtime hygiene");
-    await page.setViewport({ width: 1440, height: 1000 });
-    await page.reload({ waitUntil: "networkidle0" });
-    await wait(500);
-    ok("no console errors", errors.console.length === 0, errors.console.slice(0, 3).join(" | "));
-    ok("no uncaught page errors", errors.page.length === 0, errors.page.slice(0, 3).join(" | "));
-    ok("no failed requests or 404s", errors.requests.length === 0, errors.requests.slice(0, 5).join(" | "));
+    // A fresh page: the earlier sections deliberately trigger a rejected sign-in,
+    // which the browser logs as a failed request.
+    stub.reset();
+    const clean = await openPage(browser);
+    await clean.page.setViewport({ width: 1440, height: 1000 });
+    await clean.page.reload({ waitUntil: "networkidle0" });
+    await wait(800);
+    ok("no console errors", clean.errors.console.length === 0, clean.errors.console.slice(0, 3).join(" | "));
+    ok("no uncaught page errors", clean.errors.page.length === 0, clean.errors.page.slice(0, 3).join(" | "));
+    ok("no failed requests or 404s", clean.errors.requests.length === 0, clean.errors.requests.slice(0, 5).join(" | "));
+    ok(
+      "every backend call targets the Supabase project",
+      stub.calls().every((call) => !call.path.startsWith("/rest/v1/_")),
+      stub.calls().map((c) => c.path).join(", ")
+    );
+    await clean.page.close();
 
     await browser.close();
   } finally {

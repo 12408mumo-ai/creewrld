@@ -1107,6 +1107,27 @@ body.is-admin .card__admin {
 @keyframes shimmer { to { background-position: -200% 0; } }
 
 /* Empty */
+/* Live-data status line (config missing, connection down, loading) */
+.data-notice {
+  margin-top: 22px;
+  padding: 12px 16px;
+  border: 1px solid var(--line-bright);
+  border-left: 2px solid var(--meta-ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  line-height: 1.6;
+  color: var(--card-ink);
+  background: #0b0b0b;
+}
+.data-notice[hidden] { display: none; }
+.data-notice[data-kind="warn"] {
+  border-left-color: #c98b3f;
+  color: #e8d3b6;
+}
+.data-notice[data-kind="info"] { color: var(--meta-ink); }
+
 .empty {
   padding: clamp(56px, 10vh, 110px) 20px;
   text-align: center;
@@ -1752,6 +1773,52 @@ select option { background: #0b0b0b; color: #fff; }
 }
 
 /* Product image preview */
+
+/* File upload inside the product form */
+.field--upload input[type="file"] {
+  width: 100%;
+  padding: 14px 0 10px;
+  border-bottom: 1px solid var(--line-bright);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  letter-spacing: 0.08em;
+  color: var(--card-ink);
+  cursor: pointer;
+}
+.field--upload input[type="file"]::file-selector-button {
+  margin-right: 14px;
+  padding: 9px 14px;
+  border: 1px solid var(--line-bright);
+  background: transparent;
+  color: var(--nav-ink);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.3s var(--ease), color 0.3s var(--ease), border-color 0.3s var(--ease);
+}
+.field--upload input[type="file"]::file-selector-button:hover {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #050505;
+}
+.field--upload .field__hint {
+  display: block;
+  margin-top: 9px;
+  line-height: 1.6;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--meta-ink);
+}
+.field--upload .field__hint code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--card-ink);
+}
+
 .pf-preview {
   width: 100%;
   aspect-ratio: 16 / 9;

@@ -3,16 +3,22 @@
  * Cards are rendered from state and wired through delegated events.
  */
 
-import { CATEGORIES } from "../config.js";
 import { $, $$, esc, money } from "../lib/format.js";
 import { resolveImage } from "../lib/images.js";
-import { countFor, getProduct, setFilter, state, visibleProducts } from "../store.js";
+import {
+  categoryTabs,
+  countFor,
+  getProduct,
+  setFilter,
+  state,
+  visibleProducts
+} from "../store.js";
 
 export function renderFilters() {
   const rail = $("#filters");
   if (!rail) return;
 
-  rail.innerHTML = CATEGORIES.map((category) => {
+  rail.innerHTML = categoryTabs().map((category) => {
     const selected = state.filter === category;
     return (
       '<button type="button" class="filter" role="tab"' +
@@ -76,6 +82,17 @@ export function renderGrid() {
   const empty = $("#emptyState");
   if (empty) empty.hidden = items.length > 0;
 
+  // Tailor the empty copy: an empty shop reads differently from an empty tab.
+  const emptyText = $("#emptyText");
+  if (emptyText && items.length === 0) {
+    const wholesale = state.filter === "All Items";
+    emptyText.textContent = wholesale
+      ? state.admin
+        ? "The catalogue is empty. Use + New product above to publish the first piece."
+        : "The collection is being restocked. New drops arrive weekly — message the studio and we'll send what's landed."
+      : "No pieces land in this category right now. New drops arrive weekly — check back soon, or message the studio on WhatsApp.";
+  }
+
   // restart the staggered entrance animation on every render
   $$(".card", grid).forEach((card, index) => {
     card.style.animation = "none";
@@ -90,7 +107,7 @@ export function renderGrid() {
 
 /** Switch category without rebuilding the rail (keeps focus steady). */
 export function selectCategory(category, options = {}) {
-  if (!CATEGORIES.includes(category)) return;
+  if (!categoryTabs().includes(category)) return;
   setFilter(category);
 
   $$(".filter", $("#filters")).forEach((button) => {

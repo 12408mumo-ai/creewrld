@@ -1,21 +1,29 @@
 /**
- * Merchant tools: studio login, product editor, destructive confirmations
- * and the signed-in chrome (merchant strip, per-card overlays).
+ * Merchant tools: studio login (Supabase Auth), product editor with image
+ * uploads, destructive confirmations and the signed-in chrome (merchant strip,
+ * per-card overlays).
+ *
+ * Nothing here decides who is an admin — `state.admin` is driven by the
+ * Supabase session in store.js, and the server re-checks every write through
+ * row level security.
  */
 
-import { CONDITIONS, PRODUCT_CATEGORIES } from "../config.js";
+import { CONDITIONS } from "../lib/products.js";
 import { $, $$, esc } from "../lib/format.js";
 import {
+  categoryTabs,
   deleteProduct,
   getProduct,
-  resetCatalogue,
+  saveProduct,
+  seedStarterCatalogue,
   signIn,
   signOut,
-  state,
-  upsertProduct
+  state
 } from "../store.js";
 import { selectCategory } from "./grid.js";
 import { closeLayer, openLayer, toast } from "./layers.js";
+import { uploadProductImage, validateImage } from "../data/storage.js";
+import { describeError } from "../lib/supabase.js";
 
 const loginModal = () => $("#loginModal");
 const productModal = () => $("#productModal");
@@ -23,6 +31,8 @@ const confirmModal = () => $("#confirmModal");
 
 let pendingAction = null;
 let confirmAction = null;
+let selectedFile = null;
+let filePreviewUrl = null;
 
 /* -------------------------------------------------------------------- chrome */
 
@@ -33,19 +43,26 @@ export function applyAdminChrome() {
   if (bar) bar.hidden = !state.admin;
 
   const label = $("#loginBtnLabel");
-  if (label) label.textContent = state.admin ? "Studio · admin" : "Login / Admin";
+  if (label) {
+    const email = state.user && state.user.email ? state.user.email.split("@")[0] : "";
+    label.textContent = state.admin ? (email ? `Studio · ${email}` : "Studio · admin") : "Login / Admin";
+  }
 
   const loginBtn = $("#loginBtn");
   if (loginBtn) {
     loginBtn.setAttribute(
       "aria-label",
-      state.admin ? "Signed in as admin — sign out" : "Login / Admin"
+      state.admin ? "Signed in to the studio — sign out" : "Login / Admin"
     );
   }
 
   $$(".qv__admin").forEach((node) => {
     node.hidden = !state.admin;
   });
+
+  // The starter catalogue is only offered while there is nothing to overwrite.
+  const seed = $("#merchantSeed");
+  if (seed) seed.hidden = !(state.admin && !state.loading && state.products.length === 0);
 }
 
 /* --------------------------------------------------------------------- login */
@@ -54,12 +71,22 @@ export function openLogin(pending) {
   pendingAction = typeof pending === "function" ? pending : null;
   $("#loginForm").reset();
   $("#loginError").hidden = true;
-  openLayer(loginModal(), $("#lfUser"));
-}
+  $("#loginError").textContent = "";
 
-function closeLogin() {
-  closeLayer(loginModal());
-  pendingAction = null;
+  const configured = state.configured;
+  const email = $("#lfEmail");
+  const submit = $("#loginSubmit");
+  if (submit) submit.disabled = !configured;
+  if (email) email.disabled = !configured;
+
+  if (!configured) {
+    const error = $("#loginError");
+    error.hidden = false;
+    error.textContent =
+      "Studio login is unavailable: this build has no Supabase credentials. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY, then redeploy.";
+  }
+
+  openLayer(loginModal(), email);
 }
 
 export function requireAdmin(action) {
@@ -70,21 +97,46 @@ export function requireAdmin(action) {
   openLogin(action);
 }
 
-function handleLogin(event) {
-  event.preventDefault();
-  const username = $("#lfUser").value;
-  const password = $("#lfPass").value;
+const setLoginBusy = (busy) => {
+  const submit = $("#loginSubmit");
+  if (!submit) return;
+  submit.disabled = busy || !state.configured;
+  submit.textContent = busy ? "Signing in…" : "Enter studio";
+};
 
-  if (!signIn(username, password)) {
-    const error = $("#loginError");
+async function handleLogin(event) {
+  event.preventDefault();
+
+  const email = $("#lfEmail").value.trim();
+  const password = $("#lfPass").value;
+  const error = $("#loginError");
+
+  if (!email || !password) {
     error.hidden = false;
-    error.textContent = "Those details don't match the studio account.";
+    error.textContent = "Enter your studio email and password.";
+    return;
+  }
+
+  setLoginBusy(true);
+  error.hidden = true;
+
+  let result;
+  try {
+    result = await signIn(email, password);
+  } catch (err) {
+    result = { ok: false, error: describeError(err, "Sign in failed. Please try again.") };
+  } finally {
+    setLoginBusy(false);
+  }
+
+  if (!result.ok) {
+    error.hidden = false;
+    error.textContent = result.error;
     $("#lfPass").value = "";
     $("#lfPass").focus();
     return;
   }
 
-  $("#loginError").hidden = true;
   closeLayer(loginModal());
   toast("Merchant mode enabled");
 
@@ -112,12 +164,25 @@ function productError(field, message) {
   if (wrapper) wrapper.classList.add("has-error");
 }
 
-function updatePreview() {
-  const value = $("#pfImage").value.trim();
-  const box = $("#pfPreview");
+function clearFilePreview() {
+  if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+  filePreviewUrl = null;
+  const input = $("#pfFile");
+  if (input) input.value = "";
+}
 
+function renderPreview() {
+  const box = $("#pfPreview");
+  if (!box) return;
+
+  if (filePreviewUrl) {
+    box.innerHTML = '<img src="' + esc(filePreviewUrl) + '" alt="Preview of the image you chose" />';
+    return;
+  }
+
+  const value = $("#pfImage").value.trim();
   if (!value) {
-    box.innerHTML = "<span>Paste an image URL to preview</span>";
+    box.innerHTML = "<span>Upload an image, or paste an https:// URL</span>";
     return;
   }
   if (/^\s*(javascript|vbscript|file):/i.test(value)) {
@@ -130,10 +195,13 @@ function updatePreview() {
 export function openProductForm(product) {
   const editing = Boolean(product);
 
+  clearFilePreview();
+  selectedFile = null;
+
   $("#productTitle").innerHTML = editing ? "Edit <em>piece</em>" : "Add a <em>piece</em>";
   $("#productSub").textContent = editing
-    ? "Changes publish instantly to the live grid and save to this browser."
-    : "Published instantly to the live grid and saved to this browser.";
+    ? "Saving updates this piece in the live catalogue for every visitor."
+    : "Publishing adds this piece to the live catalogue immediately.";
   $("#productSubmit").textContent = editing ? "Save changes" : "Publish piece";
 
   $("#pfId").value = editing ? product.id : "";
@@ -142,19 +210,27 @@ export function openProductForm(product) {
     ? product.category
     : state.filter !== "All Items"
       ? state.filter
-      : PRODUCT_CATEGORIES[0];
+      : categoryTabs()[1] || "";
   $("#pfPrice").value = editing ? product.price : "";
   $("#pfCondition").value = editing ? product.condition : "Excellent";
   $("#pfSizes").value = editing ? product.sizes.join(", ") : "";
-  $("#pfImage").value = editing ? product.image : "";
+  $("#pfImage").value = editing && !String(product.image).startsWith("data:") ? product.image : "";
   $("#pfDescription").value = editing ? product.description : "";
+  $("#pfFileLabel").textContent = editing ? "Replace image (optional)" : "Upload image";
 
   clearProductErrors();
-  updatePreview();
+  renderPreview();
   openLayer(productModal(), $("#pfTitle"));
 }
 
-function handleProductSubmit(event) {
+const setProductBusy = (busy, label) => {
+  const submit = $("#productSubmit");
+  if (!submit) return;
+  submit.disabled = busy;
+  if (busy) submit.textContent = label;
+};
+
+async function handleProductSubmit(event) {
   event.preventDefault();
 
   if (!state.admin) {
@@ -186,12 +262,19 @@ function handleProductSubmit(event) {
     productError("sizes", "List at least one size, comma separated.");
     valid = false;
   }
-  if (!image) {
-    productError("image", "Add an image URL so the piece can be seen.");
+  if (!selectedFile && !image) {
+    productError("image", "Upload a photo or paste an image URL.");
     valid = false;
-  } else if (/^\s*(javascript|vbscript|file):/i.test(image)) {
-    productError("image", "That image link can't be used. Use https:// or a local path.");
+  } else if (image && /^\s*(javascript|vbscript|file):/i.test(image)) {
+    productError("image", "That image link can't be used. Use https:// or upload a file.");
     valid = false;
+  }
+  if (selectedFile) {
+    const fileIssue = validateImage(selectedFile);
+    if (fileIssue) {
+      productError("image", fileIssue);
+      valid = false;
+    }
   }
   if (description.length < 4) {
     productError("description", "Add a short description.");
@@ -204,27 +287,44 @@ function handleProductSubmit(event) {
     return;
   }
 
-  const saved = upsertProduct({
-    id: id || undefined,
-    title,
-    category: $("#pfCategory").value,
-    price: Math.round(price),
-    condition: $("#pfCondition").value,
-    sizes,
-    image,
-    description
-  });
+  setProductBusy(true, selectedFile ? "Uploading…" : "Saving…");
 
-  if (!saved) return;
+  try {
+    // The file goes to Storage first; its public URL is what the row stores.
+    let imageUrl = image;
+    if (selectedFile) {
+      imageUrl = await uploadProductImage(selectedFile, { title });
+    }
 
-  toast((id ? "Saved — " : "Published — ") + saved.title);
-  closeLayer(productModal());
+    const saved = await saveProduct({
+      id: id || undefined,
+      title,
+      category: $("#pfCategory").value,
+      price: Math.round(price),
+      condition: $("#pfCondition").value,
+      sizes,
+      image: imageUrl,
+      description
+    });
 
-  // Show the merchant exactly where the piece landed.
-  if (!id) {
-    window.setTimeout(() => {
-      selectCategory(saved.category, { focus: false, scroll: true });
-    }, 180);
+    toast((id ? "Saved — " : "Published — ") + saved.title);
+    closeLayer(productModal());
+    clearFilePreview();
+    selectedFile = null;
+
+    // Show the merchant exactly where the piece landed.
+    if (!id) {
+      window.setTimeout(() => {
+        selectCategory(saved.category, { focus: false, scroll: true });
+      }, 180);
+    }
+  } catch (error) {
+    const message = describeError(error, "Couldn't save that piece.");
+    // Surface image problems against the image field; anything else is a toast.
+    if (/image|upload/i.test(message)) productError("image", message);
+    toast(message, "warn");
+  } finally {
+    setProductBusy(false, id ? "Save changes" : "Publish piece");
   }
 }
 
@@ -247,26 +347,35 @@ export function confirmDelete(product) {
   askConfirm(
     {
       title: "Delete <em>piece</em>",
-      text: '"' + product.title + '" will be removed from the live grid. This cannot be undone.',
+      text: '"' + product.title + '" will be removed from the live catalogue. This cannot be undone.',
       confirmLabel: "Delete piece"
     },
-    () => {
-      deleteProduct(product.id);
-      toast("Deleted — " + product.title);
+    async () => {
+      try {
+        await deleteProduct(product.id);
+        toast("Deleted — " + product.title);
+      } catch (error) {
+        toast(error.message || "Couldn't delete that piece", "warn");
+      }
     }
   );
 }
 
-export function confirmReset() {
+export function confirmSeed() {
   askConfirm(
     {
-      title: "Reset <em>catalogue</em>",
-      text: "Restore the original ten pieces and discard every edit made in this browser.",
-      confirmLabel: "Reset catalogue"
+      title: "Load <em>starter catalogue</em>",
+      text: "Insert the original ten pieces so the collection isn't empty. This only runs when the catalogue has no pieces.",
+      confirmLabel: "Insert ten pieces",
+      danger: false
     },
-    () => {
-      resetCatalogue();
-      toast("Catalogue restored");
+    async () => {
+      try {
+        const count = await seedStarterCatalogue();
+        toast("Added " + count + " pieces to the catalogue");
+      } catch (error) {
+        toast(error.message || "Couldn't load the starter catalogue", "warn");
+      }
     }
   );
 }
@@ -275,12 +384,12 @@ export function confirmSignOut() {
   askConfirm(
     {
       title: "Sign out of <em>merchant mode</em>",
-      text: "The storefront returns to shopper view. Your pieces stay saved in this browser.",
+      text: "The storefront returns to shopper view. Your pieces stay in the live catalogue.",
       confirmLabel: "Sign out",
       danger: false
     },
-    () => {
-      signOut();
+    async () => {
+      await signOut();
       toast("Signed out of merchant mode");
     }
   );
@@ -299,34 +408,71 @@ export function bindAdmin() {
   on("#merchantAdd", () => {
     if (state.admin) openProductForm(null);
   });
-  on("#merchantReset", () => {
-    if (state.admin) confirmReset();
+  on("#merchantSeed", () => {
+    if (state.admin) confirmSeed();
   });
-  on("#merchantLogout", () => {
-    signOut();
+  on("#merchantLogout", async () => {
+    await signOut();
     toast("Signed out of merchant mode");
   });
-  on("#footerAdmin", () => {
-    if (state.admin) signOut();
-    else openLogin();
+  on("#footerAdmin", async () => {
+    if (state.admin) {
+      await signOut();
+      toast("Signed out of merchant mode");
+    } else {
+      openLogin();
+    }
   });
 
   on("#loginBtn", () => {
     if (state.admin) confirmSignOut();
     else openLogin();
   });
-  on("#mobileLogin", () => {
-    if (state.admin) signOut();
-    else openLogin();
+  on("#mobileLogin", async () => {
+    if (state.admin) {
+      await signOut();
+      toast("Signed out of merchant mode");
+    } else {
+      openLogin();
+    }
   });
 
   $("#loginForm").addEventListener("submit", handleLogin);
   $("#productForm").addEventListener("submit", handleProductSubmit);
 
   $("#pfImage").addEventListener("input", () => {
+    if (selectedFile) return; // a chosen file wins over the URL field
     window.clearTimeout(bindAdmin._previewTimer);
-    bindAdmin._previewTimer = window.setTimeout(updatePreview, 220);
+    bindAdmin._previewTimer = window.setTimeout(renderPreview, 200);
   });
+
+  const fileInput = $("#pfFile");
+  if (fileInput) {
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+      clearProductErrors();
+      selectedFile = null;
+
+      if (!file) {
+        clearFilePreview();
+        renderPreview();
+        return;
+      }
+
+      const issue = validateImage(file);
+      if (issue) {
+        clearFilePreview();
+        productError("image", issue);
+        renderPreview();
+        return;
+      }
+
+      selectedFile = file;
+      if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+      filePreviewUrl = URL.createObjectURL(file);
+      renderPreview();
+    });
+  }
 
   $("#confirmYes").addEventListener("click", () => {
     const action = confirmAction;
@@ -342,12 +488,17 @@ export function bindAdmin() {
     if (!confirmModal().classList.contains("is-open")) confirmAction = null;
   });
 
-  // Populate the category menu from config so it can never drift from the store.
+  // Populate the category menu from the live categories (falling back to config).
   const categorySelect = $("#pfCategory");
-  if (categorySelect && categorySelect.options.length !== PRODUCT_CATEGORIES.length) {
-    categorySelect.innerHTML = PRODUCT_CATEGORIES.map(
-      (category) => '<option value="' + esc(category) + '">' + esc(category) + "</option>"
-    ).join("");
+  if (categorySelect) {
+    const names = categoryTabs().slice(1);
+    const current = names.join("|");
+    if (categorySelect.dataset.filled !== current) {
+      categorySelect.innerHTML = names
+        .map((category) => '<option value="' + esc(category) + '">' + esc(category) + "</option>")
+        .join("");
+      categorySelect.dataset.filled = current;
+    }
   }
 
   // Conditions are configured centrally too.
@@ -360,8 +511,7 @@ export function bindAdmin() {
     ).join("");
   }
 
-  // Card overlays route through here from app.js via these helpers.
-  return { openProductForm, confirmDelete, confirmReset };
+  return { openProductForm, confirmDelete, confirmSeed };
 }
 
 export const isDraftOpen = () => productModal().classList.contains("is-open");

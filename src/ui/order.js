@@ -12,6 +12,7 @@ import {
   whatsappUrl
 } from "../lib/order.js";
 import { cartLines, clearCart, clearOrderedLines, state } from "../store.js";
+import { insertOrder } from "../data/orders.js";
 import { closeLayer, openLayer, toast } from "./layers.js";
 
 const modal = () => $("#orderModal");
@@ -136,7 +137,7 @@ function showErrors(errors) {
 
 /* ---------------------------------------------------------------- dispatch */
 
-function submitOrder(event) {
+async function submitOrder(event) {
   event.preventDefault();
   if (!draft) return;
 
@@ -158,36 +159,81 @@ function submitOrder(event) {
     return;
   }
 
+  const items = draft.items.slice();
+  const totals = orderTotals(items, draft.zone);
   const message = buildWhatsAppMessage({
-    items: draft.items,
+    items,
     customer,
     zoneId: draft.zone,
     toAbsolute: (src) => absoluteUrl(resolveImage(src))
   });
   const url = whatsappUrl(message);
 
-  const tab = window.open(url, "_blank", "noopener");
+  const submit = $("#orderSubmit");
+  if (submit) {
+    submit.disabled = true;
+    submit.dataset.label = submit.textContent;
+    submit.textContent = "Logging order…";
+  }
+
+  // Claim a tab while the click gesture is still on the stack — browsers block
+  // pop-ups opened after an await. It is pointed at WhatsApp once the order is
+  // recorded, so a logging failure never costs the studio a sale.
+  let tab = null;
+  try {
+    tab = window.open("about:blank", "_blank");
+  } catch (error) {
+    tab = null;
+  }
+  if (tab) {
+    try {
+      tab.opener = null;
+    } catch (error) {
+      /* cross-origin about:blank is fine */
+    }
+  }
+  let logged = false;
+  try {
+    await insertOrder({ items, customer, source: draft.source }, totals);
+    logged = true;
+  } catch (error) {
+    console.warn("[creewrld] order not logged", error);
+  } finally {
+    if (submit) {
+      submit.disabled = false;
+      submit.textContent = submit.dataset.label || "Order";
+    }
+  }
+
+  if (tab && !tab.closed) {
+    try {
+      tab.location.href = url;
+    } catch (error) {
+      tab = null;
+    }
+  }
+  if (!tab) tab = window.open(url, "_blank", "noopener");
   $("#orderWaLink").href = url;
 
-  const orderedItems = draft.items.slice();
   if (draft.source === "cart") {
     clearCart();
   } else if (draft.source === "cart-item") {
-    clearOrderedLines(orderedItems);
+    clearOrderedLines(items);
   }
 
-  const totals = orderTotals(orderedItems, draft.zone);
   form().hidden = true;
   successPanel().hidden = false;
   $("#orderSuccessText").innerHTML =
     "Press <strong>send</strong> in the WhatsApp chat to confirm your order of <strong>" +
     money(totals.total) +
     "</strong>. " +
-    (tab ? "The chat has opened in a new tab." : "Your browser blocked the tab — use the button below.");
+    (tab ? "The chat has opened in a new tab." : "Your browser blocked the tab — use the button below.") +
+    (logged ? "" : " <em>Note: the studio will confirm from the chat.</em>");
 
   const done = $("#orderDone");
   if (done) window.setTimeout(() => done.focus({ preventScroll: true }), 80);
   if (!tab) toast("Allow pop-ups to open WhatsApp automatically", "warn");
+  if (!logged) toast("Order couldn't be logged — send it in WhatsApp", "warn");
 }
 
 export function bindOrder() {

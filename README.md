@@ -3,32 +3,106 @@
 A single-page, obsidian-dark storefront for **CREE WRLD**, a Nairobi-based curated thrift house.
 Built with **Vite**: editorial Didone typography, the official Gothic **CW** monogram with a
 continuous 3D Y-axis spin, a filterable catalogue, and a WhatsApp-direct order flow with a live
-Nairobi delivery calculator. The owner can add, edit and delete pieces from the browser, persisted
-to `localStorage`.
+Nairobi delivery calculator.
 
-No UI framework and no runtime dependencies — Vite handles bundling, asset hashing and the dev
-server; everything else is hand-written HTML, CSS and ES modules.
+**Live backend: Supabase.** The catalogue, merchant authentication, product image uploads and every
+order all live in Supabase — there is no demo mode and no seeded client-side data. Sign in with the
+studio's email and password and the merchant controls appear; the database decides who may write.
+
+No UI framework. Vite bundles, hashes assets and runs the dev server; Supabase is the only runtime
+dependency (`@supabase/supabase-js`). Everything else is hand-written HTML, CSS and ES modules.
 
 ---
 
 ## Quick start
 
 ```bash
+cp .env.example .env      # then paste your project URL + anon key
 npm install
-npm run dev        # http://localhost:5173
-npm run build      # → dist/  (hashed assets, minified CSS/JS)
-npm run preview    # serves dist/ on http://localhost:4173
-npm test           # unit tests → production build → end-to-end suite
+npm run dev               # http://localhost:5173
+npm run build             # → dist/  (hashed assets, minified CSS/JS)
+npm run preview           # serves dist/ on http://localhost:4173
+npm test                  # unit tests → production build → end-to-end suite
 ```
 
-**Merchant demo credentials:** `admin` / `creewrld` (session persists for 12 hours).
+The database itself is one SQL file: run [`supabase/schema.sql`](supabase/schema.sql) in the
+Supabase SQL editor, then optionally [`supabase/seed.sql`](supabase/seed.sql) for the original ten
+pieces. See [Supabase setup](#supabase-setup).
 
-Adding a product is **merchant-only**: there is no `+ Add Product` control in the public header.
+**Merchant sign-in** uses a real Supabase Auth account (email + password) — create it under
+*Authentication → Users → Add user*. There are no bundled credentials.
+
+Adding a piece is **merchant-only**: there is no `+ Add Product` control in the public header.
 Sign in with `Login / Admin` and the merchant strip exposes `+ New product` (plus per-card edit
-overlays and a catalogue reset). Signing out removes them again.
+overlays). Signing out removes them again.
 
 Requirements: Node **20.19+**. The e2e suite additionally needs a local Chrome/Chromium — see
 [Verification](#verification).
+
+---
+
+## Configuration
+
+The project reads the same variable names Vercel already has, so **nothing needs renaming**:
+
+| Variable | Where it is used |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | public anon key |
+
+`VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` are accepted too, if you prefer the Vite spelling.
+
+**Why the env bridge exists.** This is a Vite app, not Next.js: there is no `process.env` in the
+browser and Vite only inlines `import.meta.env.VITE_*`. `vite.config.js` therefore reads `.env`
+files and the build environment, and injects the two values into the bundle as compile-time
+literals (`__SUPABASE_URL__`, `__SUPABASE_ANON_KEY__`). `src/lib/supabase.js` builds the client from
+those.
+
+The anon key is **designed to be public** — it ships in every Supabase web app. What protects your
+data is row level security in `supabase/schema.sql`, not secrecy. Never put the `service_role` key
+in this project: it bypasses RLS and would hand the whole database to anyone who opens DevTools.
+
+`VITE_SUPABASE_REALTIME=off` disables the live catalogue subscription (useful if you have not
+published the table for Realtime).
+
+If the variables are missing, the build still succeeds and the storefront says so in plain language
+instead of rendering an empty shop:
+
+> *Supabase is not configured — set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.*
+
+---
+
+## Supabase setup
+
+1. **Create the schema.** Paste [`supabase/schema.sql`](supabase/schema.sql) into *SQL Editor → New
+   query → Run*. It creates `categories`, `products` and `orders`, the `product-images` bucket, all
+   RLS policies and the `updated_at` trigger. It is idempotent, so re-running it is safe.
+2. **Create the merchant account.** *Authentication → Users → Add user* — email and password. Any
+   authenticated user may manage the catalogue; with a single studio account that is exactly right.
+   If you later add staff, tighten the product policies to a specific role.
+3. **Publish the starter catalogue (optional).** Run [`supabase/seed.sql`](supabase/seed.sql) on a
+   fresh database to insert the original ten pieces with their bundled photographs. It is a no-op
+   once any product exists. You can also do this from the storefront: sign in with an empty
+   catalogue and the merchant strip offers **Load starter catalogue**.
+4. **Check Realtime (optional).** *Database → Replication* — the `products` table is added to the
+   publication by the schema. If Realtime is off the storefront still refreshes when the tab
+   regains focus.
+
+### Data model
+
+| Table | Purpose | Who can read | Who can write |
+| --- | --- | --- | --- |
+| `categories` | the four tabs (`Sneakers`, `Streetwear`, `Old Money`, `Y2K`) | everyone | signed-in merchant |
+| `products` | the catalogue, with `category_id` FK and `image_url` | everyone | signed-in merchant |
+| `orders` | a log of every checkout, plus the WhatsApp hand-off | signed-in merchant | anyone may **insert** |
+| `product-images` (bucket) | uploaded product photography | everyone | signed-in merchant |
+
+`products.price` is an integer in **KSh**, `sizes` is a `text[]`, and `condition` is constrained to
+the five tags the UI offers. `orders.items` is a JSON snapshot of the lines at the moment of
+checkout, so a later price change never rewrites history.
+
+`orders` is deliberately **insert-only for shoppers**: an anonymous visitor can place an order but
+cannot read the list, so one customer can never see another's phone number.
 
 ---
 
@@ -55,12 +129,19 @@ public/
 src/
   main.js                   entry: imports CSS + boots the app
   app.js                    composition root: state → views → events
-  config.js                 store settings, zones, categories, storage keys
-  catalog.js                seed catalogue + hero lookbook
-  store.js                  state, persistence, selectors, actions (single source of truth)
+  config.js                 store settings, delivery zones, storage keys
+  catalog.js                starter catalogue (seed.sql) + hero lookbook
+  store.js                  state + Supabase orchestration (single source of truth)
+  data/                     the only modules that talk to the backend
+    products.js             fetch / insert / update / delete / realtime
+    auth.js                 signInWithPassword, session, onAuthStateChange
+    orders.js               order insert
+    storage.js              image upload → product-images bucket
   lib/
+    supabase.js             client, build-time env, timeout + error translation
+    products.js             row ⇄ app-shape mapping (pure, unit-tested)
     format.js               money/esc/slug/uid helpers
-    storage.js              injectable JSON localStorage wrapper
+    storage.js              injectable JSON localStorage wrapper (cart + zone only)
     order.js                totals, validation, WhatsApp payload (pure)
     images.js               maps stored image paths → hashed Vite URLs
   ui/
@@ -70,9 +151,13 @@ src/
   assets/
     fonts/*.woff2           self-hosted Bodoni Moda, Playfair, Inter, JetBrains Mono
     img/*.jpg               product photography
+supabase/
+  schema.sql                tables, RLS, bucket, trigger — run this first
+  seed.sql                  the original ten pieces (fresh database only)
 tests/
-  unit/*.test.js            Vitest (48 assertions)
-  e2e.mjs                   Puppeteer + axe-core against the production build (128 checks)
+  unit/*.test.js            Vitest (57 assertions)
+  e2e.mjs                   Puppeteer + axe-core against the production build (162 checks)
+  supabase-stub.mjs         in-process fake Supabase the e2e suite talks to
 ```
 
 ---
@@ -84,13 +169,13 @@ src="/src/main.js">` pulls in `styles/main.css` and the module graph. Vite injec
 stylesheet and bundle tags at build time.
 
 **Images.** `src/lib/images.js` uses `import.meta.glob("../assets/img/*.jpg", { eager: true,
-query: "?url" })` to build a filename → hashed-URL map. Product records keep human-readable paths
-(`assets/img/sneaker-mocha.jpg`), and every render resolves them through `resolveImage()`. That
-single indirection keeps three things working at once:
+query: "?url" })` to build a filename → hashed-URL map. Bundled photography keeps a human-readable
+path in `products.image_url` (`assets/img/sneaker-mocha.jpg`), and every render resolves it through
+`resolveImage()`. That single indirection keeps three kinds of value working side by side:
 
-- merchant-entered relative paths and external `https://` URLs,
-- **records written by the pre-Vite site** (no migration step needed),
-- content-hashed, cache-busted filenames in production.
+- bundled photos referenced by path → hashed build URL,
+- images uploaded through the merchant form → Supabase Storage public URL, used as-is,
+- any external `https://` URL, also used as-is.
 
 **Fonts.** `main.css` references `../assets/fonts/*.woff2`, so Vite fingerprints and emits them.
 `assetsInlineLimit: 0` keeps every font and photo as a real hashed file instead of a base64 blob.
@@ -107,24 +192,60 @@ and behind the sandbox preview host without a rebuild.
 proxied preview origin load modules and hot updates.
 
 **Modules.** `window.CREE_SEED` and the two-script global pattern are gone. `catalog.js` exports
-`SEED` and `HERO_SLIDES`; `store.js` owns state and persistence; `lib/` holds pure functions; `ui/`
-holds DOM renderers. `app.js` wires them together and `store.subscribe()` keeps views in sync.
+`SEED` (used by `supabase/seed.sql`) and `HERO_SLIDES`; `store.js` owns state; `data/` owns the
+backend; `lib/` holds pure functions; `ui/` holds DOM renderers. `app.js` wires them together and
+`store.subscribe()` keeps views in sync.
+
+**Environment.** `vite.config.js` resolves the Supabase variables (see
+[Configuration](#configuration)) and passes them through `define`, because a Vite bundle cannot read
+`process.env` at runtime the way a Next.js bundle does.
 
 ---
 
-## Data & compatibility
+## How the storefront talks to Supabase
 
-Storage keys are **unchanged** from the pre-Vite build, so an existing catalogue and cart carry over
-on first load:
+`src/store.js` is the only module that holds state; `src/data/*` is the only code that touches the
+network. Views never query the database — they render `state` and subscribe to changes.
+
+| Flow | Call |
+| --- | --- |
+| Boot | `products.select("*, categories(name, slug)")` + `categories.select(...)` |
+| Category tab | filtered in memory from the live catalogue, counts included |
+| Merchant sign-in | `auth.signInWithPassword({ email, password })` |
+| Session | `auth.onAuthStateChange()` → `state.admin`, so controls survive a refresh |
+| Add / edit | `products.insert()` / `products.update().eq("id", …)` |
+| Delete | `products.delete().eq("id", …)` |
+| Image upload | `storage.from("product-images").upload()` → `getPublicUrl()` → `image_url` |
+| Checkout | `orders.insert([...])`, then the WhatsApp hand-off |
+| Live updates | realtime `postgres_changes` on `products`, plus a refetch on tab focus |
+
+**The merchant gate is server-side.** `state.admin` only hides UI: every write is also checked by
+row level security, so a shopper who flips the flag in DevTools gets a `403` from Postgres, not an
+edit. The e2e suite asserts exactly that — it forces a rejected write and confirms the piece is not
+inserted and the form stays open with a readable message.
+
+**Ordering is deliberate.** The order is inserted *before* WhatsApp opens, so the studio keeps a
+record even if the chat is never sent. A logging failure never blocks the sale: the WhatsApp tab
+still opens, and the customer is told the studio will confirm from the chat.
+
+**Cart and delivery zone stay local.** They are per-shopper scratch state, not shop data, so they
+live in `localStorage` under the original keys:
 
 | Key | Contents |
 | --- | --- |
-| `creewrld.products.v1` | Full product array (seeded on first visit) |
 | `creewrld.cart.v1` | `[{ id, size, qty }]` |
-| `creewrld.zone.v1` | Selected delivery zone id |
-| `creewrld.session.v1` | `{ user, expires }` merchant session |
+| `creewrld.zone.v1` | selected delivery zone id |
 
-Corrupt or empty stored data heals back to the seed catalogue rather than rendering an empty shop.
+Restored cart lines are validated against the live catalogue on boot: pieces that no longer exist
+are dropped, and a size that was removed falls back to the first available one. The old keys
+`creewrld.products.v1` and `creewrld.session.v1` are **no longer written or read** — legacy values
+sitting in someone's browser are ignored, which is why the first load after this change shows the
+live catalogue rather than a stale local copy.
+
+**Failure states are visible.** A missing configuration, an unreachable project or an empty table
+each produce a plain-language line under the filters (`#dataNotice`) plus the tailored empty state —
+never a silent blank grid. Requests time out after 15s rather than leaving the shop on
+"Loading the collection…" indefinitely.
 
 ---
 
@@ -210,23 +331,37 @@ down when the header condenses on scroll, and again at the mobile breakpoints.
 `npm test` runs three layers, and the e2e layer targets the **built** output (`vite preview` on
 `dist/`), not the dev server:
 
-**Unit (Vitest, 48 assertions)** — currency formatting, HTML escaping, size parsing, delivery zone
-fees, customer validation (including the phone formats shoppers actually type), the exact WhatsApp
-payload, store CRUD, quantity caps, cart/ordered-line retirement, session expiry, subscriber
-notifications, cross-tab sync, and recovery from corrupt storage.
+**Unit (Vitest, 57 assertions)** — row ⇄ app mapping (including `category_id` resolution and
+category sorting), currency formatting, HTML escaping, size parsing, delivery zone fees, customer
+validation, the exact WhatsApp payload, cart maths and quantity caps, cart reconciliation against a
+changed catalogue, session transitions, and a rejected write surfacing instead of "saving".
 
-**E2E (128 checks)** — a real Chromium session against `dist/`:
+**E2E (162 checks)** — a real Chromium session against `dist/`:
 
 - *Build integrity*: content-hashed JS/CSS, two font preloads pointing at hashed `.woff2` files
   that return `200 font/woff2`, all three typefaces loaded via `document.fonts`, product photos
   served from hashed URLs and decoded, official brand artwork resolving from `public/`, and **no
   Add Product button in the shopper header**.
-- *Behaviour*: 10 cards, filters, order modal validation, the decoded `wa.me/254719526649` payload
-  (title, price, size, condition, absolute hashed image link, customer, free-delivery note),
-  delivery calculator (Free / KSh 200 / KSh 450), quantity steppers, cart-wide dispatch clearing the
-  cart, merchant login, add/edit/delete CRUD, persistence across reload.
-- *Legacy migration*: a pre-Vite `localStorage` record (plain `assets/img/...` path) still renders
-  and resolves to a hashed asset.
+- *Live data*: the grid renders exactly what the database returns, tabs and counts come from the
+  `categories` table, and no catalogue or session key is written to `localStorage`.
+- *Supabase Auth*: a wrong password is refused and leaves the shopper view intact; a correct one
+  goes through the `grant_type=password` endpoint and reveals the merchant strip; the session
+  survives a reload via the SDK's own token.
+- *Merchant writes*: insert (with the category resolved to its FK, the price as an integer and the
+  sizes as an array), a `PATCH` scoped to one row, and a `DELETE` scoped to one row — each asserted
+  against the row the fake backend actually stored.
+- *Storage*: the chosen file is uploaded to `product-images` under a slug + random suffix, and the
+  `image_url` saved on the row is the Supabase public URL (not a local file path).
+- *Orders*: the row is inserted before WhatsApp opens, with the customer details, the money in KSh,
+  the zone, and a JSON snapshot of the lines; the WhatsApp tab is claimed inside the click gesture
+  and navigated afterwards, so it survives pop-up blockers.
+- *Resilience*: an empty table offers the starter catalogue and seeds ten pieces; a write rejected
+  by RLS keeps the form open and inserts nothing; an unreachable backend raises the data notice.
+- *Behaviour*: the live grid and its counts, category tabs, order modal validation, the decoded
+  `wa.me/254719526649` payload (title, price, size, condition, absolute hashed image link, customer,
+  free-delivery note), the delivery calculator (Free / KSh 200 / KSh 450), quantity steppers, a
+  cart-wide dispatch clearing the cart, and the cart + zone surviving a reload while the catalogue
+  is re-read from the database.
 - *Brand lockup*: the spinner uses `creewrld-mark.png`, the wordmark image sits beneath it, the
   `spin-y` animation is still applied, and the mark decodes at header size.
 - *Typography & contrast*: the four roles above are asserted against computed styles (exact size,
@@ -237,6 +372,12 @@ notifications, cross-tab sync, and recovery from corrupt storage.
 - *Layout*: no horizontal overflow at 320/360/390/414/560/768/834/1024/1180/1280/1440/1920 px, with
   the 2/3/4-column grid breakpoints asserted.
 - *Hygiene*: no console errors, no uncaught page errors, no 404s or failed requests.
+
+**How the e2e suite reaches a backend.** There is no test mode in the bundle: the suite builds
+the real production output with throwaway credentials, launches it, and intercepts the HTTP traffic
+`@supabase/supabase-js` would send, answering it from `tests/supabase-stub.mjs` — a small stateful
+fake covering auth, PostgREST and Storage. So the assertions run against the real client and the
+real query shapes, without needing a live project or leaving test hooks in `dist/`.
 
 **Running the e2e suite.** It needs a Chrome binary. Defaults are auto-detected; otherwise:
 
@@ -256,21 +397,29 @@ The output is a static folder — host `dist/` anywhere (Netlify, Vercel, Cloudf
 Pages, S3, nginx). Because there is a single route, no SPA rewrite is required; if you later add
 routing, add a fallback to `index.html`.
 
-`server.js` from the pre-Vite version is gone: use `npm run dev` locally and `npm run preview` to
-inspect a production build.
+**Vercel.** Framework preset **Vite**, build command `npm run build`, output `dist`. Add
+`NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` to the project's environment
+variables — and **redeploy after adding them**, because the values are baked into the bundle at build
+time rather than read at runtime.
+
+The dev server runs with `host: true` on `0.0.0.0`, so it also works behind a preview proxy.
 
 ---
 
 ## Production notes
 
-This is a front-end storefront, deliberately backend-free:
-
-1. **Admin auth is client-side.** The gate keeps shoppers out of the merchant UI, but the
-   credentials live in `src/config.js` and are bundled. Move products and auth behind a real backend
-   (Supabase, Firebase, or a small Node API) before exposing inventory management publicly.
-2. **Inventory is per-browser.** Edits live in `localStorage`, so they are visible on the device that
-   made them. A shared backend is required for a catalogue every customer sees.
-3. **Images.** Bundled photos are hashed at build time; merchant-entered URLs should point at object
-   storage (S3/Cloudinary) so the links inside WhatsApp messages resolve publicly.
-4. **WhatsApp number** is defined once: `CONFIG.whatsapp` in `src/config.js`.
-5. Prices are integers in KSh, formatted with `toLocaleString("en-KE")`.
+1. **Access is enforced by the database.** `state.admin` is a rendering hint; RLS in
+   `supabase/schema.sql` is the actual gate. Keep it that way — never add a policy that trusts a
+   request body.
+2. **One merchant account is enough today.** Any authenticated user can manage the catalogue. If
+   more people get logins, move to a `staff` role or an allow-list and tighten the `products` and
+   `storage.objects` policies to it.
+3. **The anon key is public by design.** It is in the bundle. Protect data with RLS, and keep the
+   `service_role` key out of this repo and out of Vercel's client-side variables.
+4. **Images** are stored in the public `product-images` bucket, capped at 6 MB and four MIME types
+   by both the bucket and the form. The starter pieces still point at bundled `assets/img/…`
+   photography, which the build hashes — both kinds resolve side by side.
+5. **Orders are leads, not payments.** Nothing is charged: the row records intent and the WhatsApp
+   chat closes the sale. `status` is there for whatever the studio uses to track fulfilment.
+6. **WhatsApp number** is defined once: `CONFIG.whatsapp` in `src/config.js`.
+7. Prices are integers in KSh, formatted with `toLocaleString("en-KE")`.

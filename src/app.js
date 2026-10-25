@@ -1,16 +1,20 @@
 /**
  * CREE WRLD — application bootstrap.
  * Wires the modules together; every view is a render of `state`.
+ * The catalogue and the merchant session come from Supabase (see store.js).
  */
 
 import { $ } from "./lib/format.js";
 import { PLACEHOLDER } from "./lib/images.js";
+import { CONFIG_ERROR } from "./lib/supabase.js";
 import {
   addToCart,
   initStore,
+  loadCatalogue,
+  startSession,
   state,
   subscribe,
-  syncFromStorage
+  watchCatalogue
 } from "./store.js";
 import {
   applyAdminChrome,
@@ -41,6 +45,38 @@ function renderAll() {
   renderCart();
   applyAdminChrome();
   updateTopOffset();
+  renderStatus();
+}
+
+/**
+ * One line of honest status under the filters: configuration problems and
+ * connection failures are told to the shopper instead of an empty grid that
+ * looks like the shop has nothing to sell.
+ */
+function renderStatus() {
+  const notice = $("#dataNotice");
+  if (!notice) return;
+
+  let message = "";
+  let kind = "";
+
+  if (!state.configured) {
+    message = CONFIG_ERROR;
+    kind = "warn";
+  } else if (state.error) {
+    message = state.error;
+    kind = "warn";
+  } else if (state.loading && !state.products.length) {
+    message = "Loading the collection…";
+    kind = "info";
+  }
+
+  notice.textContent = message;
+  notice.dataset.kind = kind;
+  notice.hidden = !message;
+
+  const grid = $("#productGrid");
+  if (grid) grid.setAttribute("aria-busy", String(state.loading));
 }
 
 function wireStateToViews() {
@@ -50,6 +86,8 @@ function wireStateToViews() {
       renderGrid();
       renderCart();
       refreshQuickView();
+      applyAdminChrome();
+      renderStatus();
       updateTopOffset();
     }
 
@@ -58,6 +96,7 @@ function wireStateToViews() {
     if (topic === "session") {
       applyAdminChrome();
       refreshQuickView();
+      renderStatus();
       updateTopOffset();
     }
 
@@ -127,12 +166,22 @@ function bindGlobalEvents() {
     true
   );
 
-  // Keep multiple tabs in sync with the same localStorage catalogue.
+  // The cart is the only device-local state, so it is the only thing that can
+  // change in another tab without the database telling us.
   window.addEventListener("storage", (event) => {
-    if (!event.key) return;
-    if (event.key === "creewrld.products.v1") syncFromStorage("products");
-    else if (event.key === "creewrld.cart.v1") syncFromStorage("cart");
-    else if (event.key === "creewrld.session.v1") syncFromStorage("session");
+    if (event.key === "creewrld.cart.v1") {
+      initStore();
+      renderCart();
+      renderStatus();
+    }
+  });
+
+  // Coming back to the tab re-reads the catalogue: cheap, and it covers
+  // browsers where realtime is blocked or the table isn't published.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && state.configured) {
+      loadCatalogue({ quiet: true });
+    }
   });
 
   const year = $("#year");
@@ -141,7 +190,7 @@ function bindGlobalEvents() {
 
 /* ---------------------------------------------------------------------- boot */
 
-export function boot() {
+export async function boot() {
   initStore();
   wireStateToViews();
 
@@ -153,11 +202,19 @@ export function boot() {
 
   updateTopOffset();
 
-  // Deep links to a category, e.g. /#shop with ?category=Y2K
+  // Deep links to a category, e.g. /?category=Y2K
   const params = new URLSearchParams(window.location.search);
   const category = params.get("category");
   if (category) selectCategory(category, { focus: false, scroll: true });
+
+  // Live data. Both calls resolve independently: a signed-out shopper still
+  // gets the catalogue even if auth is slow, and vice versa.
+  await Promise.all([loadCatalogue(), startSession()]);
+
+  watchCatalogue();
+
+  return state;
 }
 
 /** Exposed for the smoke tests and the browser console. */
-export const app = { state, boot };
+export const app = { state, boot, loadCatalogue };

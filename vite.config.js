@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 
 /**
  * Inject <link rel="preload"> hints for the fonts that paint the first screen.
@@ -45,10 +45,48 @@ function fontPreload(needles) {
   };
 }
 
-export default defineConfig({
+/**
+ * Resolve the Supabase credentials at build time.
+ *
+ * The project stores its keys as NEXT_PUBLIC_* (the names Vercel already has),
+ * but this is a Vite app: `process.env` does not exist in the browser and only
+ * `import.meta.env.VITE_*` is inlined. So the values are read here — from .env
+ * files or from the build environment — and injected as compile-time literals.
+ * Both names work, so no Vercel variable needs renaming.
+ *
+ * Only the anon key ever reaches the bundle. It is designed to be public; row
+ * level security is what protects the data. Never add the service_role key here.
+ */
+function supabaseEnv(mode) {
+  const env = loadEnv(mode, process.cwd(), "");
+  const pick = (...keys) => {
+    for (const key of keys) {
+      const value = (env[key] || process.env[key] || "").trim();
+      if (value) return value;
+    }
+    return "";
+  };
+
+  return {
+    url: pick("VITE_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_URL"),
+    anonKey: pick("VITE_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY"),
+    realtime: pick("VITE_SUPABASE_REALTIME", "SUPABASE_REALTIME").toLowerCase() !== "off"
+  };
+}
+
+export default defineConfig(({ mode }) => {
+  const supabase = supabaseEnv(mode);
+
+  return {
   // Relative base keeps the build portable: it works at a domain root, in a
   // subdirectory, and behind the sandbox preview host.
   base: "./",
+
+  define: {
+    __SUPABASE_URL__: JSON.stringify(supabase.url),
+    __SUPABASE_ANON_KEY__: JSON.stringify(supabase.anonKey),
+    __SUPABASE_REALTIME__: JSON.stringify(supabase.realtime)
+  },
 
   plugins: [
     fontPreload(["bodoni-moda-latin-wght-normal", "inter-latin-wght-normal"])
@@ -87,4 +125,5 @@ export default defineConfig({
     include: ["tests/unit/**/*.test.js"],
     reporters: "dot"
   }
+  };
 });

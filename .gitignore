@@ -3,3 +3,7 @@ dist/
 .vite/
 *.local
 .DS_Store
+
+# Local Supabase credentials
+.env
+.env.local
