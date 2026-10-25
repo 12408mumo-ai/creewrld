@@ -72,7 +72,7 @@ src/
     img/*.jpg               product photography
 tests/
   unit/*.test.js            Vitest (48 assertions)
-  e2e.mjs                   Puppeteer + axe-core against the production build (119 checks)
+  e2e.mjs                   Puppeteer + axe-core against the production build (128 checks)
 ```
 
 ---
@@ -130,13 +130,37 @@ Corrupt or empty stored data heals back to the seed catalogue rather than render
 
 ## Brand system
 
-| Token | Value |
-| --- | --- |
-| Background | `#050505` |
-| Cards / raised | `#0f0f0f` |
-| Primary text | `#ffffff` |
-| Secondary text | `#919191` |
-| Borders | `#1f1f1f` |
+Every text colour is defined once, in `:root`, so nothing drifts back toward an unreadable grey.
+Each step was measured against the `#050505` background:
+
+| Token | Value | Contrast on `#050505` | Used for |
+| --- | --- | --- | --- |
+| `--ink` | `#ffffff` | 20.4:1 | headlines, prices, active states |
+| `--nav-ink` | `#e5e5e5` | 16.2:1 | navigation links, category tabs, header actions |
+| `--card-ink` | `#d1d1d6` | 13.4:1 | product card + quick-view overlay text |
+| `--body-ink` | `#b0b0b0` | 9.4:1 | intro paragraphs and descriptive prose |
+| `--meta-ink` | `#8e8e93` | 6.3:1 | metadata, sub-tags, field labels, fine print |
+| `--bg` | `#050505` | — | page background |
+| `--card` | `#0f0f0f` | — | cards / raised surfaces |
+| `--line` | `#1f1f1f` | — | rules and borders |
+
+`--muted` and `--muted-dim` are kept as aliases of `--meta-ink` for backwards compatibility, so older
+rules inherit the brighter platinum instead of a second, darker grey. All reading text clears WCAG AA
+(4.5:1); nav and card text clear AAA (7:1).
+
+### Type scale
+
+| Role | Size | Weight | Tracking | Colour |
+| --- | --- | --- | --- | --- |
+| Navigation (`HOME`, `SHOP`, `CART`, `LOGIN / ADMIN`) | `13px` | `500` | `0.15em` | `--nav-ink` |
+| Metadata and sub-tags (`01 NAIROBI, KENYA`) | `12px` | `400` | `0.2em` | `--meta-ink` |
+| Intro / description paragraphs | `16px` | `400` | — | `--body-ink` (line-height `1.6`) |
+| Product card + overlay text | `13px` | `400` | `0.14em`–`0.18em` | `--card-ink` |
+
+Micro-labels stay mono and uppercase, but nothing that carries reading text renders below `11px` — the
+old 7.5–9px labels were the main legibility problem on obsidian. On phones the card meta wraps to its
+own row rather than truncating size runs, and the price drops under the title when it no longer fits
+beside it.
 
 - **Display** — Bodoni Moda (variable Didone); Playfair Display italic for editorial emphasis.
 - **Body / UI** — Inter.
@@ -191,7 +215,7 @@ fees, customer validation (including the phone formats shoppers actually type), 
 payload, store CRUD, quantity caps, cart/ordered-line retirement, session expiry, subscriber
 notifications, cross-tab sync, and recovery from corrupt storage.
 
-**E2E (119 checks)** — a real Chromium session against `dist/`:
+**E2E (128 checks)** — a real Chromium session against `dist/`:
 
 - *Build integrity*: content-hashed JS/CSS, two font preloads pointing at hashed `.woff2` files
   that return `200 font/woff2`, all three typefaces loaded via `document.fonts`, product photos
@@ -205,6 +229,9 @@ notifications, cross-tab sync, and recovery from corrupt storage.
   and resolves to a hashed asset.
 - *Brand lockup*: the spinner uses `creewrld-mark.png`, the wordmark image sits beneath it, the
   `spin-y` animation is still applied, and the mark decodes at header size.
+- *Typography & contrast*: the four roles above are asserted against computed styles (exact size,
+  weight, tracking and hex), every reading colour is checked for ≥4.5:1 contrast against its actual
+  painted background, and no element carrying reading text may render below 11px.
 - *Accessibility*: axe-core — zero violations on the home page, cart drawer, order modal and login
   modal.
 - *Layout*: no horizontal overflow at 320/360/390/414/560/768/834/1024/1180/1280/1440/1920 px, with
