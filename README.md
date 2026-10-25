@@ -77,6 +77,18 @@ instead of rendering an empty shop:
 1. **Create the schema.** Paste [`supabase/schema.sql`](supabase/schema.sql) into *SQL Editor → New
    query → Run*. It creates `categories`, `products` and `orders`, the `product-images` bucket, all
    RLS policies and the `updated_at` trigger. It is idempotent, so re-running it is safe.
+
+   It is also **additive**: each table is created if missing and then topped up with `alter table …
+   add column if not exists`, plus a `create unique index if not exists` on `categories.slug` for the
+   upsert. That means the file repairs a project that already has these tables from an earlier or
+   different script — the missing columns are added and existing rows are kept, never dropped.
+
+   There is one shape it cannot repair: a legacy table with its own `not null` column that this
+   schema knows nothing about (e.g. `categories.code text not null`), because inserts cannot supply a
+   value for it. In that case run the destructive
+   [`supabase/reset.sql`](supabase/reset.sql) first — it drops only the three tables and the trigger —
+   then re-run `schema.sql` (and `seed.sql` if you want the starter pieces). Only do that on a project
+   with no real content yet.
 2. **Create the merchant account.** *Authentication → Users → Add user* — email and password. Any
    authenticated user may manage the catalogue; with a single studio account that is exactly right.
    If you later add staff, tighten the product policies to a specific role.
@@ -152,7 +164,8 @@ src/
     fonts/*.woff2           self-hosted Bodoni Moda, Playfair, Inter, JetBrains Mono
     img/*.jpg               product photography
 supabase/
-  schema.sql                tables, RLS, bucket, trigger — run this first
+  schema.sql                tables, RLS, bucket, trigger — run this first, safe to re-run
+  reset.sql                 destructive reset, only for a throwaway project
   seed.sql                  the original ten pieces (fresh database only)
 tests/
   unit/*.test.js            Vitest (57 assertions)

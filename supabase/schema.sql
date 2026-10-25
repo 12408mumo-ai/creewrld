@@ -1,10 +1,16 @@
 -- ============================================================================
 --  CREE WRLD — Supabase schema
---  Run this once in the Supabase dashboard → SQL Editor → New query → Run.
---  It is idempotent: re-running it will not lose data.
+--
+--  Supabase dashboard → SQL Editor → New query → paste this → Run.
+--
+--  Safe to re-run, and safe to run on a project that already has some of
+--  these tables: every table is created if missing, then topped up with any
+--  columns it lacks. Existing rows are never dropped.
+--
+--  gen_random_uuid() is built into Postgres 13+, which every Supabase project
+--  runs, so no extension is required.
 -- ============================================================================
 
-create extension if not exists "pgcrypto";
 
 -- ----------------------------------------------------------------- categories
 create table if not exists public.categories (
@@ -15,6 +21,17 @@ create table if not exists public.categories (
   created_at  timestamptz not null default now()
 );
 
+-- Top up a `categories` table created by an earlier or different script.
+-- Every column gets a default so this is safe on a table that already has rows.
+alter table public.categories add column if not exists id         uuid        default gen_random_uuid();
+alter table public.categories add column if not exists name       text;
+alter table public.categories add column if not exists slug       text;
+alter table public.categories add column if not exists sort_order integer     not null default 0;
+alter table public.categories add column if not exists created_at timestamptz not null default now();
+
+-- The upsert below needs a unique index on slug to match against.
+create unique index if not exists categories_slug_uidx on public.categories (slug);
+
 insert into public.categories (name, slug, sort_order) values
   ('Sneakers',   'sneakers',   1),
   ('Streetwear', 'streetwear', 2),
@@ -24,11 +41,15 @@ on conflict (slug) do update
   set name = excluded.name,
       sort_order = excluded.sort_order;
 
+
 -- ------------------------------------------------------------------- products
+-- The category foreign key is added further down, and only when the two
+-- columns really are both uuid — a legacy `categories.id` of another type
+-- must not stop the table being created.
 create table if not exists public.products (
   id           uuid primary key default gen_random_uuid(),
   title        text not null check (char_length(trim(title)) >= 2),
-  category_id  uuid references public.categories(id) on delete set null,
+  category_id  uuid,
   price        integer not null check (price > 0),           -- whole KSh
   condition    text  not null default 'Excellent'
                check (condition in ('New','Like New','Excellent','Very Good','Good')),
@@ -40,10 +61,44 @@ create table if not exists public.products (
   updated_at   timestamptz not null default now()
 );
 
+alter table public.products add column if not exists id          uuid        default gen_random_uuid();
+alter table public.products add column if not exists title       text;
+alter table public.products add column if not exists category_id uuid;
+alter table public.products add column if not exists price       integer;
+alter table public.products add column if not exists condition   text        not null default 'Excellent';
+alter table public.products add column if not exists sizes       text[]      not null default '{}';
+alter table public.products add column if not exists image_url   text;
+alter table public.products add column if not exists description text        not null default '';
+alter table public.products add column if not exists is_active   boolean     not null default true;
+alter table public.products add column if not exists created_at  timestamptz not null default now();
+alter table public.products add column if not exists updated_at  timestamptz not null default now();
+
 create index if not exists products_created_at_idx  on public.products (created_at desc);
 create index if not exists products_category_id_idx on public.products (category_id);
 
--- keep updated_at honest without trusting the client
+-- Add the category foreign key only if the types line up and it is not there yet.
+do $$
+declare
+  cat_id_type   text;
+  product_type  text;
+begin
+  select data_type into cat_id_type
+    from information_schema.columns
+   where table_schema = 'public' and table_name = 'categories' and column_name = 'id';
+
+  select data_type into product_type
+    from information_schema.columns
+   where table_schema = 'public' and table_name = 'products' and column_name = 'category_id';
+
+  if cat_id_type = 'uuid' and product_type = 'uuid'
+     and not exists (select 1 from pg_constraint where conname = 'products_category_id_fkey') then
+    alter table public.products
+      add constraint products_category_id_fkey
+      foreign key (category_id) references public.categories (id) on delete set null;
+  end if;
+end $$;
+
+-- Keep updated_at honest without trusting the client.
 create or replace function public.touch_updated_at()
 returns trigger
 language plpgsql
@@ -58,6 +113,7 @@ drop trigger if exists products_touch_updated_at on public.products;
 create trigger products_touch_updated_at
   before update on public.products
   for each row execute function public.touch_updated_at();
+
 
 -- --------------------------------------------------------------------- orders
 create table if not exists public.orders (
@@ -78,8 +134,24 @@ create table if not exists public.orders (
                     check (status in ('new','contacted','paid','dispatched','cancelled'))
 );
 
+alter table public.orders add column if not exists id                uuid        default gen_random_uuid();
+alter table public.orders add column if not exists created_at        timestamptz not null default now();
+alter table public.orders add column if not exists customer_name     text;
+alter table public.orders add column if not exists phone             text;
+alter table public.orders add column if not exists delivery_location text;
+alter table public.orders add column if not exists zone              text;
+alter table public.orders add column if not exists zone_label        text        not null default '';
+alter table public.orders add column if not exists zone_fee          integer     not null default 0;
+alter table public.orders add column if not exists subtotal          integer     not null default 0;
+alter table public.orders add column if not exists total             integer     not null default 0;
+alter table public.orders add column if not exists item_count        integer     not null default 0;
+alter table public.orders add column if not exists items             jsonb       not null default '[]'::jsonb;
+alter table public.orders add column if not exists source            text        not null default 'product';
+alter table public.orders add column if not exists status            text        not null default 'new';
+
 create index if not exists orders_created_at_idx on public.orders (created_at desc);
 create index if not exists orders_status_idx     on public.orders (status);
+
 
 -- =========================================================== row level security
 alter table public.categories enable row level security;
@@ -87,7 +159,7 @@ alter table public.products   enable row level security;
 alter table public.orders     enable row level security;
 
 -- Anyone can read the shop. Only a signed-in merchant can change it.
-drop policy if exists "categories are public"      on public.categories;
+drop policy if exists "categories are public"       on public.categories;
 drop policy if exists "categories writable by staff" on public.categories;
 create policy "categories are public"
   on public.categories for select
@@ -97,8 +169,8 @@ create policy "categories writable by staff"
   to authenticated
   using (true) with check (true);
 
-drop policy if exists "products are public" on public.products;
-drop policy if exists "products writable by staff" on public.products;
+drop policy if exists "products are public"        on public.products;
+drop policy if exists "products writable by staff"  on public.products;
 create policy "products are public"
   on public.products for select
   using (true);
@@ -129,6 +201,7 @@ create policy "orders deletable by staff"
   to authenticated
   using (true);
 
+
 -- ------------------------------------------------------------------- realtime
 -- Optional: live grid updates across devices. Safe to re-run.
 do $$
@@ -146,6 +219,7 @@ exception
     raise notice 'Publication supabase_realtime not found — enable Realtime in the dashboard.';
 end;
 $$;
+
 
 -- ================================================================ storage bucket
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
