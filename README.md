@@ -1,7 +1,7 @@
 # CREE WRLD — Nairobi
 
 A single-page, obsidian-dark storefront for **CREE WRLD**, a Nairobi-based curated thrift house.
-Built with **Vite**: editorial Didone typography, a hand-built Gothic **CW** monogram with a
+Built with **Vite**: editorial Didone typography, the official Gothic **CW** monogram with a
 continuous 3D Y-axis spin, a filterable catalogue, and a WhatsApp-direct order flow with a live
 Nairobi delivery calculator. The owner can add, edit and delete pieces from the browser, persisted
 to `localStorage`.
@@ -22,6 +22,10 @@ npm test           # unit tests → production build → end-to-end suite
 ```
 
 **Merchant demo credentials:** `admin` / `creewrld` (session persists for 12 hours).
+
+Adding a product is **merchant-only**: there is no `+ Add Product` control in the public header.
+Sign in with `Login / Admin` and the merchant strip exposes `+ New product` (plus per-card edit
+overlays and a catalogue reset). Signing out removes them again.
 
 Requirements: Node **20.19+**. The e2e suite additionally needs a local Chrome/Chromium — see
 [Verification](#verification).
@@ -47,7 +51,7 @@ Requirements: Node **20.19+**. The e2e suite additionally needs a local Chrome/C
 index.html                  Vite entry — markup only (scripts/styles injected by Vite)
 vite.config.js              base "./", host/allowedHosts, font-preload plugin, build options
 public/
-  assets/logo/              monogram, favicon, mark — copied verbatim, stable URLs
+  assets/logo/              official brand artwork + favicons — copied verbatim, stable URLs
 src/
   main.js                   entry: imports CSS + boots the app
   app.js                    composition root: state → views → events
@@ -64,11 +68,11 @@ src/
     order.js   admin.js layers.js reveal.js
   styles/main.css           the full design system
   assets/
-    fonts/*.woff2           self-hosted Bodoni Moda, Playfair, Inter, JetBrains Mono, UnifrakturCook
+    fonts/*.woff2           self-hosted Bodoni Moda, Playfair, Inter, JetBrains Mono
     img/*.jpg               product photography
 tests/
   unit/*.test.js            Vitest (48 assertions)
-  e2e.mjs                   Puppeteer + axe-core against the production build (111 checks)
+  e2e.mjs                   Puppeteer + axe-core against the production build (119 checks)
 ```
 
 ---
@@ -93,8 +97,8 @@ single indirection keeps three things working at once:
 
 **Preloads.** The hashed font names only exist after the build, so a small plugin
 (`fontPreload` in `vite.config.js`, `apply: "build"`) reads the emitted bundle and injects
-`<link rel="preload" as="font" type="font/woff2">` for the three first-paint faces (Bodoni Moda,
-Inter, UnifrakturCook) with the correct relative `href`s.
+`<link rel="preload" as="font" type="font/woff2">` for the two first-paint faces (Bodoni Moda and
+Inter) with the correct relative `href`s.
 
 **Base path.** `base: "./"` makes `dist/` portable — it works at a domain root, in a subdirectory,
 and behind the sandbox preview host without a rebuild.
@@ -137,33 +141,45 @@ Corrupt or empty stored data heals back to the seed catalogue rather than render
 - **Display** — Bodoni Moda (variable Didone); Playfair Display italic for editorial emphasis.
 - **Body / UI** — Inter.
 - **Micro-labels, prices, badges** — JetBrains Mono, `0.15em`–`0.3em` tracking, uppercase.
-- **Wordmark** — UnifrakturCook subset to `A–Z` (4 KB).
+- **Wordmark** — the official Gothic "CREE WRLD" artwork
+  (`public/assets/logo/creewrld-wordmark.png`).
 
-### Supplying the real logo
+### Brand artwork
 
-The monogram at `public/assets/logo/creewrld-monogram.svg` is a **reconstruction** drawn from
-blackletter glyph outlines (the original brand file was not available). It is referenced from
-`index.html` in six places — three stacked faces for the 3D spin, plus the hero watermark and the
-footer mark.
+The official logo is supplied as three raster assets in `public/assets/logo/`:
 
-To swap in the real artwork, replace that file. Best results:
+| File | Contents | Used by |
+| --- | --- | --- |
+| `creewrld-mark.png` | the interlocking Gothic **CW** monogram with its sharp flourishes | header spinner (×3 faces), hero watermark |
+| `creewrld-wordmark.png` | "CREE WRLD" Gothic wordmark + hairline rule | header, directly beneath the spinner |
+| `creewrld-lockup.png` | mark + wordmark + rule as one lockup | footer brand block, `og:image` |
+| `favicon-180.png`, `icon-512.png` | the mark on an obsidian tile | favicon / home-screen icon |
 
-1. **Vector, transparent background** (SVG preferred) — just overwrite `creewrld-monogram.svg`,
-   keeping the filename. Nothing else changes.
-2. **Transparent PNG** — save it as `public/assets/logo/creewrld-monogram.png`, then:
+They were extracted from the supplied artwork with a white-line key (full-alpha ramp, so the
+hairline flourishes keep their anti-aliasing), trimmed, and exported at 2× for retina. The header
+mark is keyed slightly *bolder* so a 64px render still reads on a phone.
 
-   ```bash
-   sed -i 's|creewrld-monogram.svg|creewrld-monogram.png|g' index.html
-   ```
+**To replace them**, drop new files in at the same paths and keep the filenames — that is the only
+change required. If you supply a **transparent SVG** instead, save it as
+`public/assets/logo/creewrld-mark.svg` and update the three `<img>` tags in `index.html`'s `.brand`
+block (plus the hero watermark); everything else is CSS-sized.
 
-3. **A logo on a solid black/white background** will look wrong against the storefront. Either
-   re-export it with transparency, or ask for the `mix-blend-mode: screen` treatment
-   (`.brand__face img` in `src/styles/main.css`) to knock out a black backdrop.
+Two things to preserve when re-exporting:
 
-Inverted/white-on-transparent artwork is what the dark UI expects; the header applies a soft
-`drop-shadow` glow that assumes a transparent plate.
+1. **Transparency.** The mark is white line-art; a flattened black plate would show as a rectangle
+   against the storefront.
+2. **Aspect ratio.** `index.html` declares intrinsic `width`/`height` on each image so the header
+   does not shift while the heavy PNGs decode. If your artwork has different proportions, update
+   those attributes to match, or the image will look stretched.
 
----
+### Header lockup
+
+The mark sits in a `perspective` container with three stacked faces (front, a blurred ghost pushed
+back on Z, and a mirrored back face) and rotates continuously via
+`@keyframes spin-y { to { transform: rotateY(360deg) } }` over 12s. The official wordmark image sits
+directly beneath it, so the spinner appears to sit above the typography. The whole lockup scales
+down when the header condenses on scroll, and again at the mobile breakpoints.
+`prefers-reduced-motion` disables the rotation.
 
 ## Verification
 
@@ -175,17 +191,20 @@ fees, customer validation (including the phone formats shoppers actually type), 
 payload, store CRUD, quantity caps, cart/ordered-line retirement, session expiry, subscriber
 notifications, cross-tab sync, and recovery from corrupt storage.
 
-**E2E (111 checks)** — a real Chromium session against `dist/`:
+**E2E (119 checks)** — a real Chromium session against `dist/`:
 
-- *Build integrity*: content-hashed JS/CSS, three font preloads pointing at hashed `.woff2` files
-  that return `200 font/woff2`, all four typefaces loaded via `document.fonts`, product photos
-  served from hashed URLs and decoded.
+- *Build integrity*: content-hashed JS/CSS, two font preloads pointing at hashed `.woff2` files
+  that return `200 font/woff2`, all three typefaces loaded via `document.fonts`, product photos
+  served from hashed URLs and decoded, official brand artwork resolving from `public/`, and **no
+  Add Product button in the shopper header**.
 - *Behaviour*: 10 cards, filters, order modal validation, the decoded `wa.me/254719526649` payload
   (title, price, size, condition, absolute hashed image link, customer, free-delivery note),
   delivery calculator (Free / KSh 200 / KSh 450), quantity steppers, cart-wide dispatch clearing the
   cart, merchant login, add/edit/delete CRUD, persistence across reload.
 - *Legacy migration*: a pre-Vite `localStorage` record (plain `assets/img/...` path) still renders
   and resolves to a hashed asset.
+- *Brand lockup*: the spinner uses `creewrld-mark.png`, the wordmark image sits beneath it, the
+  `spin-y` animation is still applied, and the mark decodes at header size.
 - *Accessibility*: axe-core — zero violations on the home page, cart drawer, order modal and login
   modal.
 - *Layout*: no horizontal overflow at 320/360/390/414/560/768/834/1024/1180/1280/1440/1920 px, with

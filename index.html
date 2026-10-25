@@ -10,9 +10,10 @@
 <meta property="og:title" content="CREE WRLD — Curated High-Grade Thrift · Nairobi" />
 <meta property="og:description" content="Selected across Sneakers, Streetwear, Old Money and Y2K. Dispatched directly from Nairobi. Free delivery within Nairobi." />
 <meta property="og:type" content="website" />
-<meta property="og:image" content="/assets/logo/creewrld-mark.png" />
+<meta property="og:image" content="/assets/logo/creewrld-lockup.png" />
 <link rel="icon" href="/assets/logo/favicon-180.png" />
 <link rel="apple-touch-icon" href="/assets/logo/favicon-180.png" />
+<link rel="icon" type="image/png" sizes="512x512" href="/assets/logo/icon-512.png" />
 <!-- Font preloads and the stylesheet are injected by Vite (hashed filenames). -->
 </head>
 <body>
@@ -22,7 +23,6 @@
 <!-- ============ ICONS ============ -->
 <svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
   <symbol id="i-cart" viewBox="0 0 24 24"><path d="M3 4h2.2l2.1 11.2a1.6 1.6 0 0 0 1.6 1.3h8.6a1.6 1.6 0 0 0 1.6-1.2L21 8H6.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9.5" cy="20" r="1.15" fill="currentColor"/><circle cx="18" cy="20" r="1.15" fill="currentColor"/></symbol>
-  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 4v16M4 12h16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
   <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M4.8 20c.7-3.6 3.6-5.6 7.2-5.6s6.5 2 7.2 5.6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
   <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
   <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4.2L20 8.2 15.8 4 4 15.8V20Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M13.6 6.2 17.8 10.4" fill="none" stroke="currentColor" stroke-width="1.2"/></symbol>
@@ -63,18 +63,15 @@
     <a class="brand" href="#home" aria-label="CREE WRLD — home">
       <span class="brand__stage">
         <span class="brand__spinner" aria-hidden="true">
-          <span class="brand__face brand__face--front"><img src="/assets/logo/creewrld-monogram.svg" alt="" width="220" height="182" /></span>
-          <span class="brand__face brand__face--ghost"><img src="/assets/logo/creewrld-monogram.svg" alt="" width="220" height="182" /></span>
-          <span class="brand__face brand__face--back"><img src="/assets/logo/creewrld-monogram.svg" alt="" width="220" height="182" /></span>
+          <span class="brand__face brand__face--front"><img src="/assets/logo/creewrld-mark.png" alt="" width="900" height="956" /></span>
+          <span class="brand__face brand__face--ghost"><img src="/assets/logo/creewrld-mark.png" alt="" width="900" height="956" /></span>
+          <span class="brand__face brand__face--back"><img src="/assets/logo/creewrld-mark.png" alt="" width="900" height="956" /></span>
         </span>
       </span>
-      <span class="brand__word">CREE WRLD</span>
+      <img class="brand__word" src="/assets/logo/creewrld-wordmark.png" alt="" width="1310" height="248" />
     </a>
 
     <div class="actions">
-      <button type="button" class="action" id="addProductBtn" aria-haspopup="dialog">
-        <svg class="ico" aria-hidden="true"><use href="#i-plus"/></svg><span>Add Product</span>
-      </button>
       <button type="button" class="action" id="loginBtn" aria-haspopup="dialog">
         <svg class="ico" aria-hidden="true"><use href="#i-user"/></svg><span id="loginBtnLabel">Login / Admin</span>
       </button>
@@ -103,7 +100,6 @@
     <a href="#home">Home</a>
     <a href="#shop">Shop</a>
     <button type="button" data-cart-open>Cart</button>
-    <button type="button" id="mobileAddProduct">Add Product</button>
     <button type="button" id="mobileLogin">Login / Admin</button>
   </nav>
 </div>
@@ -113,7 +109,7 @@
   <!-- ============ HERO ============ -->
   <section class="hero" id="home">
     <div class="hero__mesh" aria-hidden="true">
-      <span class="hero__mesh-mark"><img src="/assets/logo/creewrld-monogram.svg" alt="" /></span>
+      <span class="hero__mesh-mark"><img src="/assets/logo/creewrld-mark.png" alt="" /></span>
     </div>
 
     <div class="hero__inner">
@@ -236,8 +232,7 @@
 <footer class="footer">
   <div class="footer__top">
     <div class="footer__brand">
-      <img class="footer__mark" src="/assets/logo/creewrld-monogram.svg" alt="CREE WRLD monogram" width="220" height="182" />
-      <p class="footer__word">CREE WRLD</p>
+      <img class="footer__mark" src="/assets/logo/creewrld-lockup.png" alt="CREE WRLD — Gothic CW monogram" width="1200" height="1469" />
       <p class="footer__line">Curated high-grade thrift.<br />Nairobi, Kenya.</p>
     </div>
 

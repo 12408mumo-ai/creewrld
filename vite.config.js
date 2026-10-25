@@ -51,11 +51,7 @@ export default defineConfig({
   base: "./",
 
   plugins: [
-    fontPreload([
-      "bodoni-moda-latin-wght-normal",
-      "inter-latin-wght-normal",
-      "unifrakturcook-gothic"
-    ])
+    fontPreload(["bodoni-moda-latin-wght-normal", "inter-latin-wght-normal"])
   ],
 
   server: {
