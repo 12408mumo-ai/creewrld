@@ -420,32 +420,22 @@
     <div class="modal__head">
       <p class="modal__kicker">Merchant access</p>
       <h2 class="modal__title" id="loginTitle">Studio <em>login</em></h2>
-      <p class="modal__sub">Sign in to add, edit and remove pieces from the live grid.</p>
+      <p class="modal__sub">Enter the studio passphrase to access merchant controls and manage inventory.</p>
     </div>
 
     <form class="form" id="loginForm" novalidate>
       <div class="field">
-        <label for="lfEmail">Studio Gmail</label>
-        <input id="lfEmail" name="email" type="email" autocomplete="username" inputmode="email"
-          autocapitalize="none" autocorrect="off" spellcheck="false"
-          placeholder="yourname@gmail.com" aria-describedby="lfEmailHint" required />
-        <p class="field__hint" id="lfEmailHint">Use the studio's Gmail address.</p>
-      </div>
-      <div class="field">
         <label for="lfPass">Password</label>
-        <input id="lfPass" name="password" type="password" autocomplete="current-password"
+        <input id="lfPass" name="password" type="password" autocomplete="off"
           autocapitalize="none" autocorrect="off" spellcheck="false"
-          placeholder="••••••••" required />
+          placeholder="Enter passphrase" required />
       </div>
-      <div class="field__err field__err--block" id="loginError" role="alert" hidden>
-        <p id="loginErrorText"></p>
-        <p class="field__err__detail" id="loginErrorDetail" hidden></p>
-      </div>
+      <p class="field__err field__err--block" id="loginError" role="alert" hidden></p>
       <button type="submit" class="btn btn--primary btn--wide" id="loginSubmit">Enter studio</button>
       <p class="form__fine">
-        Access runs through <strong>Supabase Auth</strong> on the studio's
-        <strong>Gmail</strong> account. Only an account the studio has invited can add, edit
-        or delete pieces — the database enforces that on the server, not in this page.
+        One passphrase unlocks the merchant controls for this browser tab. It is a
+        convenience lock for the studio, not a security boundary — the catalogue itself
+        is protected by the rules in <code>supabase/studio-access.sql</code>.
       </p>
     </form>
   </div>

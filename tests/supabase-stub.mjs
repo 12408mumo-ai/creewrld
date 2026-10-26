@@ -237,10 +237,9 @@ export function createSupabaseStub({ email = "owner@creewrld.test", password = "
         return json(rows);
       }
 
-      const authorised = state.signedIn;
-      if (!authorised) {
-        return json({ code: "42501", message: "new row violates row-level security policy for table \"products\"" }, 403);
-      }
+      // Writes no longer require a session: the shipped policies grant the
+      // anonymous role access to the catalogue (supabase/studio-access.sql),
+      // because the studio is unlocked with a passphrase in the browser.
       if (state.failNextWrite) {
         const message = state.failNextWrite;
         state.failNextWrite = null;
@@ -293,8 +292,8 @@ export function createSupabaseStub({ email = "owner@creewrld.test", password = "
         return json(created, 201);
       }
       if (method === "GET") {
-        if (!state.signedIn) return json({ message: "permission denied" }, 403);
-        return json(state.orders);
+        // Orders are insert-only from the storefront; reading them needs the table editor.
+        return json({ message: "permission denied" }, 403);
       }
     }
 
@@ -314,7 +313,7 @@ export function createSupabaseStub({ email = "owner@creewrld.test", password = "
     if (url.pathname.startsWith("/storage/v1/object/product-images/")) {
       const path = url.pathname.replace("/storage/v1/object/product-images/", "");
       if (method === "POST" || method === "PUT") {
-        if (!state.signedIn) return json({ statusCode: "403", error: "Unauthorized", message: "new row violates row-level security policy" }, 403);
+        if (state.failNextWrite) return json({ statusCode: "403", error: "Unauthorized", message: "new row violates row-level security policy" }, 403);
         state.uploads.push(path);
         return json({ Key: `product-images/${path}`, Id: uuid() });
       }

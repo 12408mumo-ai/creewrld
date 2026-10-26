@@ -1,11 +1,11 @@
 /**
  * Application state: the live catalogue, the cart, the delivery zone and the
- * merchant session.
+ * studio lock.
  *
- * The catalogue and the session live in Supabase — this module is the only
- * place that talks to it. The cart and the chosen delivery zone stay in
- * localStorage because they are per-shopper scratch state, not shop data:
- * nothing about the storefront's inventory or access depends on them.
+ * The catalogue lives in Supabase — this module is the only place that talks
+ * to it. The studio lock is a passphrase check plus a sessionStorage flag, and
+ * the cart and delivery zone are per-shopper scratch state. Nothing about the
+ * inventory is stored on the device.
  *
  * Every mutation notifies subscribers, so the UI stays a pure render of state.
  */
@@ -16,7 +16,7 @@ import { readJSON, readRaw, writeJSON, writeRaw } from "./lib/storage.js";
 import { normalizeSizes, sum } from "./lib/format.js";
 import { cartTotals as computeCartTotals } from "./lib/order.js";
 import { supabaseConfig } from "./lib/supabase.js";
-import { getSession, onAuthStateChange, signInWithPassword, signOutMerchant } from "./data/auth.js";
+import { isStudioUnlocked, lockStudio, unlockStudio } from "./data/studio.js";
 import {
   countProducts,
   deleteProductRow,
@@ -34,7 +34,6 @@ export const state = {
   filter: "All Items",
   zone: DEFAULT_ZONE,
   admin: false,
-  user: null,
   loading: true,
   error: null,
   configured: supabaseConfig.configured
@@ -147,39 +146,32 @@ export function watchCatalogue() {
 
 /* ---------------------------------------------------------------- session */
 
-export function applySession(session) {
-  const next = Boolean(session && session.user);
-  state.user = next ? session.user : null;
-  state.admin = next;
+/** Read this tab's stored unlock, so a reload keeps the merchant in. */
+export function restoreStudio() {
+  state.admin = isStudioUnlocked();
   emit("session");
+  return state.admin;
 }
 
-/** Restore any existing session and keep `state.admin` in step with Supabase. */
-export async function startSession() {
-  if (!state.configured) return () => {};
-
-  try {
-    applySession(await getSession());
-  } catch (err) {
-    applySession(null);
+/**
+ * Compare a typed passphrase against the studio passphrase.
+ * Returns { ok } or { ok: false } — no network, no account, no session.
+ */
+export function unlockStudioWith(passphrase) {
+  const ok = unlockStudio(passphrase);
+  if (ok) {
+    state.admin = true;
+    emit("session");
   }
-
-  return onAuthStateChange((session) => applySession(session));
+  return { ok };
 }
 
-export async function signIn(email, password) {
-  const result = await signInWithPassword(email, password);
-  if (!result.ok) return result;
-  applySession(result.session);
-  return result;
-}
-
-export async function signOut() {
-  const result = await signOutMerchant();
-  // Even if the network call fails, this device must stop showing merchant
-  // controls — the server is still the authority on every write.
-  applySession(null);
-  return result;
+/** Close the studio and forget the flag for this tab. */
+export function lockStudioSession() {
+  lockStudio();
+  state.admin = false;
+  emit("session");
+  return { ok: true };
 }
 
 /* --------------------------------------------------------------- selectors */

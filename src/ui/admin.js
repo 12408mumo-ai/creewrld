@@ -1,11 +1,11 @@
 /**
- * Merchant tools: studio login (Supabase Auth), product editor with image
- * uploads, destructive confirmations and the signed-in chrome (merchant strip,
+ * Merchant tools: the studio passphrase prompt, product editor with image
+ * uploads, destructive confirmations and the unlocked chrome (merchant strip,
  * per-card overlays).
  *
- * Nothing here decides who is an admin — `state.admin` is driven by the
- * Supabase session in store.js, and the server re-checks every write through
- * row level security.
+ * Nothing here decides who is an admin on its own — `state.admin` comes from
+ * store.js, which compares the passphrase and remembers the answer for the
+ * tab. See src/data/studio.js for what that is and is not worth.
  */
 
 import { CONDITIONS } from "../lib/products.js";
@@ -15,16 +15,15 @@ import {
   deleteProduct,
   getProduct,
   saveProduct,
+  lockStudioSession,
   seedStarterCatalogue,
-  signIn,
-  signOut,
-  state
+  state,
+  unlockStudioWith
 } from "../store.js";
 import { selectCategory } from "./grid.js";
 import { closeLayer, openLayer, toast } from "./layers.js";
 import { uploadProductImage, validateImage } from "../data/storage.js";
-import { NETWORK_ERROR, normalizeEmail } from "../data/auth.js";
-import { describeError, supabaseConfig } from "../lib/supabase.js";
+import { describeError } from "../lib/supabase.js";
 
 const loginModal = () => $("#loginModal");
 const productModal = () => $("#productModal");
@@ -73,30 +72,20 @@ export function applyAdminChrome() {
 
 /* --------------------------------------------------------------------- login */
 
-/** Blank the refusal panel — message, Supabase's detail line, and visibility. */
+/** Blank the passphrase error. */
 function clearLoginError() {
   const error = $("#loginError");
-  const text = $("#loginErrorText");
-  const detail = $("#loginErrorDetail");
-  if (text) text.textContent = "";
-  if (detail) {
-    detail.textContent = "";
-    detail.hidden = true;
-  }
-  if (error) error.hidden = true;
+  if (!error) return;
+  error.textContent = "";
+  error.hidden = true;
 }
 
-/** Show the sentence, plus Supabase's own answer underneath when we have one. */
-function showLoginError(message, detail) {
+/** Show one line in red under the field. */
+function showLoginError(message) {
   const error = $("#loginError");
-  const text = $("#loginErrorText");
-  const node = $("#loginErrorDetail");
-  if (text) text.textContent = message || "";
-  if (node) {
-    node.textContent = detail || "";
-    node.hidden = !detail;
-  }
-  if (error) error.hidden = false;
+  if (!error) return;
+  error.textContent = message || "";
+  error.hidden = !message;
 }
 
 export function openLogin(pending) {
@@ -104,19 +93,10 @@ export function openLogin(pending) {
   $("#loginForm").reset();
   clearLoginError();
 
-  const configured = state.configured;
-  const email = $("#lfEmail");
   const submit = $("#loginSubmit");
-  if (submit) submit.disabled = !configured;
-  if (email) email.disabled = !configured;
+  if (submit) submit.disabled = false;
 
-  if (!configured) {
-    showLoginError(
-      "Studio login is unavailable: this build has no Supabase credentials. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY, then redeploy."
-    );
-  }
-
-  openLayer(loginModal(), email);
+  openLayer(loginModal(), $("#lfPass"));
 }
 
 export function requireAdmin(action) {
@@ -127,86 +107,26 @@ export function requireAdmin(action) {
   openLogin(action);
 }
 
-const setLoginBusy = (busy) => {
-  const submit = $("#loginSubmit");
-  if (!submit) return;
-  submit.disabled = busy || !state.configured;
-  submit.textContent = busy ? "Signing in…" : "Enter studio";
-  submit.setAttribute("aria-busy", busy ? "true" : "false");
-};
-
 async function handleLogin(event) {
   event.preventDefault();
 
-  const field = $("#lfEmail");
-  const passField = $("#lfPass");
-
-  // Addresses are stored lower-case, so "  12408Mumo@Gmail.com " has to become
-  // "12408mumo@gmail.com" before it is compared. The password is trimmed too:
-  // a phone keyboard loves to append a space on autofill.
-  const email = normalizeEmail(field.value);
-  const typedPassword = passField.value;
-  const password = typedPassword.trim();
-
-  // Show the normalised address, so what is on screen is what was sent.
-  if (field.value !== email) field.value = email;
+  const field = $("#lfPass");
+  const typed = field.value;
 
   clearLoginError();
 
-  if (!email || !password) {
-    showLoginError("Enter your studio Gmail address and password.");
+  if (!typed.trim()) {
+    showLoginError("Enter the studio passphrase.");
+    field.focus();
     return;
   }
 
-  // Deliberately loud: when a sign-in is refused, the address, the project it
-  // is being sent to, and whether the password was altered on the way are the
-  // three facts that explain it. The password itself is never logged.
-  console.log("Attempting login for:", email);
-  console.log(
-    "[auth] project:",
-    supabaseConfig.url || "(no Supabase URL in this build)",
-    "| password chars:",
-    password.length,
-    password !== typedPassword ? "(surrounding whitespace trimmed)" : ""
-  );
-
-  setLoginBusy(true);
-
-  let result;
-  try {
-    result = await signIn(email, password);
-  } catch (err) {
-    result = { ok: false, error: describeError(err, NETWORK_ERROR) };
-  } finally {
-    setLoginBusy(false);
-  }
-
-  // Trimming the password is the requested behaviour, but a space can be part
-  // of a real password. If we removed one and were refused, try the string the
-  // merchant actually typed before giving up — otherwise this form could cause
-  // the very failure it is meant to cure.
-  if (!result.ok && password !== typedPassword) {
-    console.log("[auth] refused after trimming — retrying with the password exactly as typed");
-    setLoginBusy(true);
-    try {
-      result = await signIn(email, typedPassword);
-    } catch (err) {
-      result = { ok: false, error: describeError(err, NETWORK_ERROR) };
-    } finally {
-      setLoginBusy(false);
-    }
-  }
+  const result = unlockStudioWith(typed);
 
   if (!result.ok) {
-    showLoginError(result.error, result.detail);
-    if (result.code === "invalid_credentials" || result.code === "invalid_grant") {
-      console.warn(
-        "[auth] invalid_credentials: Supabase refused this address/password pair. If the user is in the Dashboard, confirm it belongs to",
-        supabaseConfig.url || "this project"
-      );
-    }
-    passField.value = "";
-    passField.focus();
+    showLoginError("Incorrect studio passphrase. Please try again.");
+    field.value = "";
+    field.focus();
     return;
   }
 
@@ -469,46 +389,35 @@ export function bindAdmin() {
   on("#merchantSeed", () => {
     if (state.admin) confirmSeed();
   });
-  on("#merchantLogout", async () => {
-    await signOut();
+  const closeStudio = () => {
+    lockStudioSession();
     toast("Signed out of merchant mode");
-  });
-  on("#footerAdmin", async () => {
-    if (state.admin) {
-      await signOut();
-      toast("Signed out of merchant mode");
-    } else {
-      openLogin();
-    }
+  };
+
+  on("#merchantLogout", closeStudio);
+  on("#footerAdmin", () => {
+    if (state.admin) closeStudio();
+    else openLogin();
   });
 
   // One control, two jobs — exactly as the label says: LOGIN / ADMIN opens the
-  // modal, LOGOUT ends the session.
-  on("#loginBtn", async () => {
-    if (!state.admin) {
-      openLogin();
-      return;
-    }
-    await signOut();
-    toast("Signed out of merchant mode");
+  // passphrase prompt, LOGOUT forgets it and hides every merchant control.
+  on("#loginBtn", () => {
+    if (state.admin) closeStudio();
+    else openLogin();
   });
-  on("#mobileLogin", async () => {
-    if (state.admin) {
-      await signOut();
-      toast("Signed out of merchant mode");
-    } else {
-      openLogin();
-    }
+  on("#mobileLogin", () => {
+    if (state.admin) closeStudio();
+    else openLogin();
   });
 
   $("#loginForm").addEventListener("submit", handleLogin);
 
-  // A refusal belongs to the attempt that caused it. Start changing either
-  // field and the message about the last one gets out of the way.
-  ["#lfEmail", "#lfPass"].forEach((selector) => {
-    const input = $(selector);
-    if (input) input.addEventListener("input", clearLoginError);
-  });
+  // A refusal belongs to the attempt that caused it: start retyping and the
+  // message about the last one gets out of the way.
+  const passField = $("#lfPass");
+  if (passField) passField.addEventListener("input", clearLoginError);
+
   $("#productForm").addEventListener("submit", handleProductSubmit);
 
   $("#pfImage").addEventListener("input", () => {

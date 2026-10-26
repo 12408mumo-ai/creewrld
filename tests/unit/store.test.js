@@ -18,6 +18,7 @@ function memoryStorage() {
 }
 
 let storage;
+let session;
 
 /** A catalogue row exactly as PostgREST returns it (with the category join). */
 const row = (overrides = {}) => ({
@@ -63,16 +64,10 @@ async function freshStore({ products = [row()], categories = [{ id: "cat-sneaker
     subscribeToProducts: vi.fn(() => () => {})
   }));
 
-  vi.doMock("../../src/data/auth.js", () => ({
-    getSession: vi.fn(async () => null),
-    signInWithPassword: vi.fn(async (email, password) =>
-      password === "creewrld"
-        ? { ok: true, session: { user: { email } }, user: { email } }
-        : { ok: false, error: "That email and password don't match a studio account." }
-    ),
-    signOutMerchant: vi.fn(async () => ({ ok: true })),
-    onAuthStateChange: vi.fn(() => () => {})
-  }));
+  // The studio lock is real here, not mocked: it only needs a sessionStorage
+  // stand-in, so the passphrase comparison is exercised as shipped.
+  const studioLib = await import("../../src/data/studio.js");
+  studioLib.setStudioStorage(session);
 
   const store = await import("../../src/store.js");
   const storageLib = await import("../../src/lib/storage.js");
@@ -85,7 +80,8 @@ async function freshStore({ products = [row()], categories = [{ id: "cat-sneaker
 const product = (store) => store.state.products[0];
 
 beforeEach(() => {
-  storage = memoryStorage();
+  storage = memoryStorage();   // localStorage stand-in — cart and zone only
+  session = memoryStorage();   // sessionStorage stand-in — the studio flag
 });
 
 describe("catalogue", () => {
@@ -198,38 +194,60 @@ describe("cart", () => {
   });
 });
 
-describe("session", () => {
-  it("signs in through the auth layer and flips the merchant flag", async () => {
+describe("studio lock", () => {
+  it("unlocks with the studio passphrase", async () => {
     const store = await freshStore();
     expect(store.state.admin).toBe(false);
 
-    const result = await store.signIn("owner@creewrld.test", "creewrld");
+    const result = store.unlockStudioWith("creewrld.com");
     expect(result.ok).toBe(true);
     expect(store.state.admin).toBe(true);
-    expect(store.state.user.email).toBe("owner@creewrld.test");
   });
 
-  it("rejects a wrong password without granting access", async () => {
+  it("remembers the unlock in sessionStorage, under isAdmin", async () => {
     const store = await freshStore();
-    const result = await store.signIn("owner@creewrld.test", "nope");
+    store.unlockStudioWith("creewrld.com");
+    expect(session.getItem("isAdmin")).toBe("true");
+  });
+
+  it("rejects a wrong passphrase without granting access", async () => {
+    const store = await freshStore();
+    const result = store.unlockStudioWith("creewrld");
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/don't match/i);
     expect(store.state.admin).toBe(false);
+    expect(session.getItem("isAdmin")).toBeNull();
   });
 
-  it("never stores the merchant flag in localStorage", async () => {
+  it("tolerates surrounding spaces and unexpected case", async () => {
     const store = await freshStore();
-    await store.signIn("owner@creewrld.test", "creewrld");
-    expect(storage.getItem("creewrld.session.v1")).toBeNull();
-    expect(JSON.stringify(Object.keys(storage._map))).not.toMatch(/session|admin/);
+    expect(store.unlockStudioWith("  CreeWrld.COM  ").ok).toBe(true);
+    expect(store.state.admin).toBe(true);
   });
 
-  it("signing out clears the merchant flag", async () => {
+  it("restores the unlock after a reload of the same tab", async () => {
+    const first = await freshStore();
+    first.unlockStudioWith("creewrld.com");
+
+    const second = await freshStore();
+    expect(second.state.admin).toBe(false);
+    second.restoreStudio();
+    expect(second.state.admin).toBe(true);
+  });
+
+  it("locking clears the flag and the merchant state", async () => {
     const store = await freshStore();
-    await store.signIn("owner@creewrld.test", "creewrld");
-    await store.signOut();
+    store.unlockStudioWith("creewrld.com");
+    store.lockStudioSession();
     expect(store.state.admin).toBe(false);
-    expect(store.state.user).toBeNull();
+    expect(session.getItem("isAdmin")).toBeNull();
+    expect(store.restoreStudio()).toBe(false);
+  });
+
+  it("never writes the studio flag to localStorage", async () => {
+    const store = await freshStore();
+    store.unlockStudioWith("creewrld.com");
+    expect(storage.getItem("isAdmin")).toBeNull();
+    expect(JSON.stringify(Object.keys(storage._map))).not.toMatch(/admin|session/i);
   });
 });
 

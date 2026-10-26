@@ -11,7 +11,7 @@ import {
   addToCart,
   initStore,
   loadCatalogue,
-  startSession,
+  restoreStudio,
   state,
   subscribe,
   watchCatalogue
@@ -207,9 +207,10 @@ export async function boot() {
   const category = params.get("category");
   if (category) selectCategory(category, { focus: false, scroll: true });
 
-  // Live data. Both calls resolve independently: a signed-out shopper still
-  // gets the catalogue even if auth is slow, and vice versa.
-  await Promise.all([loadCatalogue(), startSession()]);
+  // The studio lock is read from this tab's sessionStorage, so a reload keeps
+  // the merchant in. The catalogue is independent of it.
+  restoreStudio();
+  await loadCatalogue();
 
   watchCatalogue();
 
