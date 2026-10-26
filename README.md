@@ -131,6 +131,39 @@ commit `d821995`). That is the only arrangement where the database itself decide
 The passphrase can be changed in one place — `STUDIO_PASSPHRASE` in `src/data/studio.js` — and the
 site must be redeployed for it to take effect.
 
+### When the merchant controls do not appear
+
+`applyAdminState()` reads `sessionStorage.isAdmin` and is the only thing that shows or hides merchant
+surfaces. It runs on `DOMContentLoaded`, after the passphrase is accepted, after a logout, and after
+every grid render — so the DOM cannot drift from storage. If the controls are still missing, the
+browser console answers it in one line:
+
+```js
+creewrldStudio()
+// { isAdmin: true, sessionFlag: "true", headerLabel: "Logout",
+//   merchantBarVisible: true, cardControls: 5 }
+```
+
+| Reading | Meaning |
+| --- | --- |
+| `isAdmin: true`, `merchantBarVisible: true`, `cardControls: > 0` | The UI is correct — if you cannot see them, you are looking at a **cached or stale deployment**. Hard-reload, and check which commit the deployment was built from. |
+| `isAdmin: false` while the modal said it unlocked | `sessionStorage` is blocked (private mode, a locked-down iframe). The unlock lasts until reload; open the site in a normal tab. |
+| `sessionFlag: "true"` but `isAdmin: false` | Something cleared session state after boot — reload and check again. |
+| `cardControls: 0` | No products rendered, so there are no cards to attach buttons to. See the data notice on the page. |
+
+### When a published piece does not reach the grid
+
+A publish is only half the story — the row has to be readable afterwards. Both halves need the
+policies from [`supabase/studio-access.sql`](supabase/studio-access.sql):
+
+1. **The write is refused.** The toast reads *"Failed to publish piece to database. Ensure database
+   RLS policies permit public inserts."* → that file has not been run against this project.
+2. **The write lands but the grid stays empty.** The follow-up `select` is what repopulates the grid;
+   if it fails you get *"Saved, but the grid couldn't refresh."* Check the read policy on `products`.
+3. **Other visitors.** The merchant's own tab re-reads the catalogue immediately after a write. A
+   different browser picks the piece up through Realtime (the `products` table must be in the
+   `supabase_realtime` publication) or when the tab regains focus, whichever happens first.
+
 ### Data model
 
 | Table | Purpose | Who can read | Who can write |
@@ -200,7 +233,7 @@ supabase/
   reset.sql                 destructive reset, only for a throwaway project
   seed.sql                  the original ten pieces (fresh database only)
 tests/
-  unit/*.test.js            Vitest (69 assertions)
+  unit/*.test.js            Vitest (75 assertions)
   e2e.mjs                   Puppeteer + axe-core against the production build (162 checks)
   supabase-stub.mjs         in-process fake Supabase the e2e suite talks to
 ```
@@ -259,6 +292,7 @@ network. Views never query the database — they render `state` and subscribe to
 | Studio unlock | passphrase compared in `data/studio.js` → `sessionStorage.isAdmin` |
 | Session | `restoreStudio()` on boot reads that flag → `state.admin` |
 | Add / edit | `products.insert()` / `products.update().eq("id", …)` |
+| After a write | the drawer closes, then `refreshCatalogue()` re-reads `products` + `categories` |
 | Delete | `products.delete().eq("id", …)` |
 | Image upload | `storage.from("product-images").upload()` → `getPublicUrl()` → `image_url` |
 | Checkout | `orders.insert([...])`, then the WhatsApp hand-off |
@@ -376,13 +410,13 @@ down when the header condenses on scroll, and again at the mobile breakpoints.
 `npm test` runs three layers, and the e2e layer targets the **built** output (`vite preview` on
 `dist/`), not the dev server:
 
-**Unit (Vitest, 69 assertions)** — row ⇄ app mapping (including `category_id` resolution and
+**Unit (Vitest, 75 assertions)** — row ⇄ app mapping (including `category_id` resolution and
 category sorting), currency formatting, HTML escaping, size parsing, delivery zone fees, customer
 validation, the exact WhatsApp payload, cart maths and quantity caps, cart reconciliation against a
 changed catalogue, the passphrase comparison and its storage flag (including blocked storage), and a
 rejected write surfacing instead of "saving".
 
-**E2E (188 checks)** — a real Chromium session against `dist/`:
+**E2E (199 checks)** — a real Chromium session against `dist/`:
 
 - *Build integrity*: content-hashed JS/CSS, two font preloads pointing at hashed `.woff2` files
   that return `200 font/woff2`, all three typefaces loaded via `document.fonts`, product photos

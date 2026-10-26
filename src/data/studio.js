@@ -65,15 +65,27 @@ export function unlockStudio(value) {
   return true;
 }
 
-/** True when this tab already unlocked the studio. */
-export function isStudioUnlocked() {
+/**
+ * The stored flag: true, false, or null when storage cannot be read at all.
+ *
+ * The three-way answer matters. A browser that blocks sessionStorage (private
+ * mode, a locked-down iframe) is not the same as one where the merchant has
+ * logged out — treating them the same would re-lock the studio the instant
+ * anything re-read the flag.
+ */
+export function readStudioFlag() {
   const storage = store();
-  if (!storage) return false;
+  if (!storage) return null;
   try {
     return storage.getItem(STUDIO_KEY) === "true";
   } catch (err) {
-    return false;
+    return null;
   }
+}
+
+/** True when this tab already unlocked the studio. */
+export function isStudioUnlocked() {
+  return readStudioFlag() === true;
 }
 
 /** Forget the unlock, on this tab. */

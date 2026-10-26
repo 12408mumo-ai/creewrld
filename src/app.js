@@ -17,7 +17,7 @@ import {
   watchCatalogue
 } from "./store.js";
 import {
-  applyAdminChrome,
+  applyAdminState,
   bindAdmin,
   confirmDelete,
   openProductForm,
@@ -43,7 +43,7 @@ function renderAll() {
   renderFilters();
   renderGrid();
   renderCart();
-  applyAdminChrome();
+  applyAdminState();
   updateTopOffset();
   renderStatus();
 }
@@ -86,7 +86,7 @@ function wireStateToViews() {
       renderGrid();
       renderCart();
       refreshQuickView();
-      applyAdminChrome();
+      applyAdminState();
       renderStatus();
       updateTopOffset();
     }
@@ -94,7 +94,7 @@ function wireStateToViews() {
     if (topic === "cart") renderCart();
 
     if (topic === "session") {
-      applyAdminChrome();
+      applyAdminState();
       refreshQuickView();
       renderStatus();
       updateTopOffset();
@@ -194,6 +194,11 @@ export async function boot() {
   initStore();
   wireStateToViews();
 
+  // Read the studio lock before the first paint, so a reload never flashes the
+  // shopper chrome over a merchant's controls (or the other way round).
+  restoreStudio();
+  applyAdminState();
+
   initHeader();
   renderAll();
   initHero();
@@ -207,9 +212,10 @@ export async function boot() {
   const category = params.get("category");
   if (category) selectCategory(category, { focus: false, scroll: true });
 
-  // The studio lock is read from this tab's sessionStorage, so a reload keeps
-  // the merchant in. The catalogue is independent of it.
-  restoreStudio();
+  // Re-assert once the catalogue is in: the merchant strip's "Load starter
+  // catalogue" button depends on what came back.
+  applyAdminState();
+
   await loadCatalogue();
 
   watchCatalogue();
@@ -218,4 +224,22 @@ export async function boot() {
 }
 
 /** Exposed for the smoke tests and the browser console. */
-export const app = { state, boot, loadCatalogue };
+export const app = {
+  state,
+  boot,
+  loadCatalogue,
+  /** What the studio lock thinks right now, for debugging a stuck header. */
+  studioState: () => ({
+    isAdmin: state.admin,
+    sessionFlag: (() => {
+      try {
+        return window.sessionStorage.getItem("isAdmin");
+      } catch (err) {
+        return "(storage blocked)";
+      }
+    })(),
+    headerLabel: ($("#loginBtnLabel") || {}).textContent || null,
+    merchantBarVisible: $("#merchantBar") ? !$("#merchantBar").hidden : null,
+    cardControls: document.querySelectorAll(".card__admin").length
+  })
+};

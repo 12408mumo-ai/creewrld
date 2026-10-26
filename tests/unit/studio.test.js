@@ -6,6 +6,7 @@ import {
   lockStudio,
   normalizePassphrase,
   passphraseMatches,
+  readStudioFlag,
   setStudioStorage,
   unlockStudio
 } from "../../src/data/studio.js";
@@ -102,5 +103,34 @@ describe("the session flag", () => {
     expect(unlockStudio("creewrld.com")).toBe(true); // still unlocks this page
     expect(isStudioUnlocked()).toBe(false);          // just cannot be remembered
     expect(() => lockStudio()).not.toThrow();
+  });
+});
+
+describe("readStudioFlag — the three-way answer", () => {
+  it("is false when the flag is absent", () => {
+    expect(readStudioFlag()).toBe(false);
+  });
+
+  it("is true once unlocked", () => {
+    unlockStudio("creewrld.com");
+    expect(readStudioFlag()).toBe(true);
+  });
+
+  it("is null — not false — when storage cannot be read", () => {
+    setStudioStorage({
+      getItem() {
+        throw new Error("blocked");
+      },
+      setItem() {
+        throw new Error("blocked");
+      },
+      removeItem() {
+        throw new Error("blocked");
+      }
+    });
+
+    // The distinction matters: a locked-down browser is not a logout.
+    expect(readStudioFlag()).toBeNull();
+    expect(isStudioUnlocked()).toBe(false);
   });
 });

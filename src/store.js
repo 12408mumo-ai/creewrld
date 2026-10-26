@@ -16,7 +16,7 @@ import { readJSON, readRaw, writeJSON, writeRaw } from "./lib/storage.js";
 import { normalizeSizes, sum } from "./lib/format.js";
 import { cartTotals as computeCartTotals } from "./lib/order.js";
 import { supabaseConfig } from "./lib/supabase.js";
-import { isStudioUnlocked, lockStudio, unlockStudio } from "./data/studio.js";
+import { isStudioUnlocked, lockStudio, readStudioFlag, unlockStudio } from "./data/studio.js";
 import {
   countProducts,
   deleteProductRow,
@@ -137,6 +137,18 @@ export async function loadCatalogue({ quiet = false } = {}) {
   return state;
 }
 
+/**
+ * Re-read the catalogue from Supabase and repaint.
+ *
+ * Called after a write succeeds. The insert/update response is merged into
+ * state first so the piece appears immediately, then this replaces state with
+ * what the database actually holds — which is what makes the row canonical
+ * (server defaults, the joined category, another device's changes).
+ */
+export async function refreshCatalogue() {
+  return loadCatalogue({ quiet: true });
+}
+
 /** Real-time catalogue updates across devices. Returns an unsubscribe fn. */
 export function watchCatalogue() {
   return subscribeToProducts(() => {
@@ -151,6 +163,26 @@ export function restoreStudio() {
   state.admin = isStudioUnlocked();
   emit("session");
   return state.admin;
+}
+
+/**
+ * Make `state.admin` agree with sessionStorage — the single source of truth
+ * for the studio lock. Emits only when the value actually changes, so calling
+ * this on every render cannot loop.
+ */
+export function syncStudioFromStorage() {
+  const stored = readStudioFlag();
+
+  // null means the browser would not tell us (storage blocked). Keep whatever
+  // this page already decided — a live unlock must not be undone by a failed
+  // read, and a locked page must not be unlocked by one either.
+  if (stored === null) return state.admin;
+
+  if (state.admin !== stored) {
+    state.admin = stored;
+    emit("session");
+  }
+  return stored;
 }
 
 /**
