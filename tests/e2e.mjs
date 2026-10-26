@@ -462,14 +462,28 @@ async function run() {
     ok(
       "order row carries the customer details",
       logged && logged.customer_name === "Amina Otieno" &&
-        logged.phone === "0712 345 678" &&
-        logged.delivery_location === "Kilimani, Nairobi",
-      JSON.stringify(logged && { name: logged.customer_name, phone: logged.phone, where: logged.delivery_location })
+        logged.customer_phone === "0712 345 678" &&
+        logged.delivery_area === "Kilimani, Nairobi",
+      JSON.stringify(logged && { name: logged.customer_name, phone: logged.customer_phone, where: logged.delivery_area })
+    );
+    const orderPost = stub.calls().find((call) => call.method === "POST" && call.path === "/rest/v1/orders");
+    const orderBody = orderPost && (Array.isArray(orderPost.body) ? orderPost.body[0] : orderPost.body);
+    ok(
+      "the order insert writes the documented columns",
+      Boolean(orderBody) &&
+        ["customer_name", "customer_phone", "delivery_area", "items", "total_price", "status"].every((key) => key in orderBody),
+      JSON.stringify(orderBody && Object.keys(orderBody))
     );
     ok(
+      "the order insert asks for nothing back",
+      Boolean(orderPost) && !/select=/.test(orderPost.query),
+      orderPost && orderPost.query
+    );
+
+    ok(
       "order row carries the money in KSh",
-      logged && logged.subtotal === 6500 && logged.zone_fee === 0 && logged.total === 6500,
-      JSON.stringify(logged && { subtotal: logged.subtotal, fee: logged.zone_fee, total: logged.total })
+      logged && logged.subtotal === 6500 && logged.zone_fee === 0 && logged.total_price === 6500,
+      JSON.stringify(logged && { subtotal: logged.subtotal, fee: logged.zone_fee, total: logged.total_price })
     );
     ok(
       "order row snapshots the line items",
@@ -812,7 +826,7 @@ async function run() {
     ok("edit kept the row id", stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.id === inserted.id);
     ok("edit did not duplicate the row", stub.rows().filter((rowDB) => rowDB.title === "Selvedge Trucker").length === 1);
 
-    /* ---- stock status: sold out is persisted as is_active = false */
+    /* ---- stock status: sold out is persisted as in_stock = false */
     await click(page, ".card [data-edit]");
     await wait(300);
     ok("edit pre-fills the stock toggle as in stock", (await page.evaluate(() => document.querySelector("#pfStock").checked)) === true);
@@ -825,9 +839,9 @@ async function run() {
     await wait(900);
 
     ok(
-      "sold out is written as is_active false",
-      stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.is_active === false,
-      JSON.stringify(stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.is_active)
+      "sold out is written as in_stock false",
+      stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.in_stock === false,
+      JSON.stringify(stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.in_stock)
     );
 
     await click(page, '[data-filter="All Items"]');
@@ -859,9 +873,9 @@ async function run() {
     await submit(page, "#productForm");
     await wait(900);
     ok(
-      "coming back in stock clears is_active false",
-      stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.is_active === true,
-      JSON.stringify(stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.is_active)
+      "coming back in stock sets in_stock true",
+      stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.in_stock === true,
+      JSON.stringify(stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.in_stock)
     );
 
     /* ---- delete */

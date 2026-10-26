@@ -56,11 +56,12 @@ describe("rowToProduct", () => {
   });
 
   it("reads the stock column, defaulting old rows to in stock", () => {
-    expect(rowToProduct(dbRow()).inStock).toBe(true);
-    expect(rowToProduct(dbRow({ is_active: true })).inStock).toBe(true);
-    expect(rowToProduct(dbRow({ is_active: false })).inStock).toBe(false);
+    expect(rowToProduct(dbRow({ in_stock: true })).inStock).toBe(true);
+    expect(rowToProduct(dbRow({ in_stock: false })).inStock).toBe(false);
     // A row written before the column existed has no value at all.
-    expect(rowToProduct(dbRow({ is_active: undefined })).inStock).toBe(true);
+    expect(rowToProduct(dbRow({ in_stock: undefined })).inStock).toBe(true);
+    // …and a database still carrying the old `is_active` column keeps working.
+    expect(rowToProduct(dbRow({ is_active: false })).inStock).toBe(false);
   });
 
   it("drops unusable rows from a list", () => {
@@ -89,12 +90,12 @@ describe("productToRow", () => {
     expect(row.image_url).toBe("https://cdn.example.com/b.jpg");
   });
 
-  it("writes the stock switch as is_active", () => {
+  it("writes the stock switch as in_stock", () => {
     const base = { title: "Tee", category: "Sneakers", price: 100, sizes: ["M"] };
-    expect(productToRow({ ...base, inStock: true }, categories).is_active).toBe(true);
-    expect(productToRow({ ...base, inStock: false }, categories).is_active).toBe(false);
+    expect(productToRow({ ...base, inStock: true }, categories).in_stock).toBe(true);
+    expect(productToRow({ ...base, inStock: false }, categories).in_stock).toBe(false);
     // An older caller that says nothing keeps the piece on sale.
-    expect(productToRow(base, categories).is_active).toBe(true);
+    expect(productToRow(base, categories).in_stock).toBe(true);
   });
 
   it("rounds a price typed as a decimal", () => {
