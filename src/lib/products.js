@@ -6,7 +6,8 @@
  *
  * products row:
  *   id uuid, title text, category_id uuid, price integer (KSh),
- *   condition text, sizes text[], image_url text, description text, created_at
+ *   condition text, sizes text[], image_url text, description text,
+ *   is_active boolean (false = sold out), created_at
  * joined as: categories: { name, slug } | null
  */
 
@@ -38,6 +39,9 @@ export function rowToProduct(row) {
     sizes: sizes.length ? sizes : ["One size"],
     image: String(row.image_url || "").trim() || PLACEHOLDER,
     description: String(row.description || "").trim(),
+    // The column is `is_active`; "sold out" is the merchant-facing name for
+    // false. A row from before the column existed counts as in stock.
+    inStock: row.is_active !== false,
     addedAt: row.created_at ? Date.parse(row.created_at) || Date.now() : Date.now()
   };
 }
@@ -65,7 +69,8 @@ export function productToRow(product, categories = []) {
     condition: CONDITIONS.includes(product.condition) ? product.condition : "Excellent",
     sizes: normalizeSizes(product.sizes),
     image_url: String(product.image || "").trim(),
-    description: String(product.description || "").trim()
+    description: String(product.description || "").trim(),
+    is_active: product.inStock !== false
   };
 }
 

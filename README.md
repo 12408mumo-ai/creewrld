@@ -32,10 +32,12 @@ pieces. See [Supabase setup](#supabase-setup).
 **Studio access** is one passphrase (`creewrld.com`), compared in the browser and remembered in
 `sessionStorage` for the tab. There is no Supabase Auth, no account and no email field.
 
-Adding a piece is **merchant-only**: there is no `+ Add Product` control in the public header.
-Click `Login / Admin`, enter the passphrase — the header link then reads `Logout` and the merchant
-strip exposes `+ New product` (plus per-card edit overlays). `Logout` clears the flag and returns the
-storefront to shopper view.
+Adding a piece is **merchant-only**: there is no `+ New piece` control in the public header.
+Click `Login / Admin`, enter the passphrase — the header link then reads `Logout`, a **studio bar**
+appears under the header (`● STUDIO ACTIVE`, the piece count, `+ NEW PIECE`, `LOGOUT`) and every card
+grows `EDIT` / `DELETE` controls. `+ New piece` opens the studio drawer: title, category, price in
+KSh, sizes, condition, description, an `In stock` / `Sold out` switch and an image dropzone.
+`Logout` clears the flag and returns the storefront to shopper view.
 
 Requirements: Node **20.19+**. The e2e suite additionally needs a local Chrome/Chromium — see
 [Verification](#verification).
@@ -99,7 +101,7 @@ instead of rendering an empty shop:
 3. **Publish the starter catalogue (optional).** Run [`supabase/seed.sql`](supabase/seed.sql) on a
    fresh database to insert the original ten pieces with their bundled photographs. It is a no-op
    once any product exists. You can also do this from the storefront: sign in with an empty
-   catalogue and the merchant strip offers **Load starter catalogue**.
+   catalogue and the studio bar offers **Load starter catalogue**.
 4. **Check Realtime (optional).** *Database → Replication* — the `products` table is added to the
    publication by the schema. If Realtime is off the storefront still refreshes when the tab
    regains focus.
@@ -141,12 +143,12 @@ browser console answers it in one line:
 ```js
 creewrldStudio()
 // { isAdmin: true, sessionFlag: "true", headerLabel: "Logout",
-//   merchantBarVisible: true, cardControls: 5 }
+//   studioBarVisible: true, drawerOpen: false, cardControls: 5 }
 ```
 
 | Reading | Meaning |
 | --- | --- |
-| `isAdmin: true`, `merchantBarVisible: true`, `cardControls: > 0` | The UI is correct — if you cannot see them, you are looking at a **cached or stale deployment**. Hard-reload, and check which commit the deployment was built from. |
+| `isAdmin: true`, `studioBarVisible: true`, `cardControls: > 0` | The UI is correct — if you cannot see them, you are looking at a **cached or stale deployment**. Hard-reload, and check which commit the deployment was built from. |
 | `isAdmin: false` while the modal said it unlocked | `sessionStorage` is blocked (private mode, a locked-down iframe). The unlock lasts until reload; open the site in a normal tab. |
 | `sessionFlag: "true"` but `isAdmin: false` | Something cleared session state after boot — reload and check again. |
 | `cardControls: 0` | No products rendered, so there are no cards to attach buttons to. See the data notice on the page. |
@@ -416,7 +418,7 @@ validation, the exact WhatsApp payload, cart maths and quantity caps, cart recon
 changed catalogue, the passphrase comparison and its storage flag (including blocked storage), and a
 rejected write surfacing instead of "saving".
 
-**E2E (199 checks)** — a real Chromium session against `dist/`:
+**E2E (226 checks)** — a real Chromium session against `dist/`:
 
 - *Build integrity*: content-hashed JS/CSS, two font preloads pointing at hashed `.woff2` files
   that return `200 font/woff2`, all three typefaces loaded via `document.fonts`, product photos
@@ -425,12 +427,16 @@ rejected write surfacing instead of "saving".
 - *Live data*: the grid renders exactly what the database returns, tabs and counts come from the
   `categories` table, and no catalogue or session key is written to `localStorage`.
 - *Studio access*: a wrong passphrase is refused in red without touching the network and leaves the
-  shopper view intact; the correct one — typed with stray spaces and odd case — reveals the merchant
-  strip, writes `sessionStorage.isAdmin`, and survives a reload; `Logout` reverses all of it. A
+  shopper view intact; the correct one — typed with stray spaces and odd case — reveals the studio
+  bar, writes `sessionStorage.isAdmin`, and survives a reload; `Logout` reverses all of it. A
   second tab starts locked, and no `/auth/v1/*` request is ever made.
 - *Merchant writes*: insert (with the category resolved to its FK, the price as an integer and the
   sizes as an array), a `PATCH` scoped to one row, and a `DELETE` scoped to one row — each asserted
   against the row the fake backend actually stored.
+- *Studio drawer*: the four database categories, a stock switch that flips between `In stock` and
+  `Sold out`, and a dropzone that accepts a **dragged** file as readily as a browsed one — the drop
+  previews the thumbnail before anything is uploaded. A sold-out piece keeps its place on the grid,
+  marked and unorderable, and comes back on sale when the switch is flipped again.
 - *Storage*: the chosen file is uploaded to `product-images` under a slug + random suffix, and the
   `image_url` saved on the row is the Supabase public URL (not a local file path).
 - *Orders*: the row is inserted before WhatsApp opens, with the customer details, the money in KSh,

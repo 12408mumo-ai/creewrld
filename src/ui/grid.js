@@ -36,19 +36,26 @@ export function renderFilters() {
 
 export function cardMarkup(product, index) {
   const delay = Math.min(index * 45, 360);
+  const soldOut = product.inStock === false;
   return (
-    '<article class="card" data-id="' + esc(product.id) + '" style="animation-delay:' + delay + 'ms">' +
+    '<article class="card' + (soldOut ? " is-sold-out" : "") + '" data-id="' + esc(product.id) +
+      '" style="animation-delay:' + delay + 'ms">' +
       '<div class="card__media">' +
         '<img src="' + esc(resolveImage(product.image)) + '" alt="' + esc(product.title) + '"' +
           ' loading="lazy" width="900" height="1125" />' +
-        '<span class="card__badge">' + esc(product.condition) + "</span>" +
+        '<span class="card__badge' + (soldOut ? " card__badge--out" : "") + '">' +
+          esc(soldOut ? "Sold out" : product.condition) + "</span>" +
+        // Studio controls. The labels are hidden on narrow screens, where the
+        // icons alone are clearer than two words over a photograph.
         '<div class="card__admin">' +
           '<button type="button" class="icon-btn" data-edit="' + esc(product.id) + '"' +
-            ' aria-label="Edit ' + esc(product.title) + '">' +
-            '<svg class="ico" aria-hidden="true"><use href="#i-edit"/></svg></button>' +
+            ' aria-label="Edit ' + esc(product.title) + '" title="Edit">' +
+            '<svg class="ico" aria-hidden="true"><use href="#i-edit"/></svg>' +
+            "<span>Edit</span></button>" +
           '<button type="button" class="icon-btn icon-btn--del" data-delete="' + esc(product.id) + '"' +
-            ' aria-label="Delete ' + esc(product.title) + '">' +
-            '<svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg></button>' +
+            ' aria-label="Delete ' + esc(product.title) + '" title="Delete">' +
+            '<svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg>' +
+            "<span>Delete</span></button>" +
         "</div>" +
         '<button type="button" class="card__quick" data-quick="' + esc(product.id) + '">Quick view</button>' +
       "</div>" +
@@ -61,8 +68,9 @@ export function cardMarkup(product, index) {
           '<span class="card__sizes">' + esc(product.sizes.join(" · ")) + "</span>" +
           '<span class="card__cat">' + esc(product.category) + "</span>" +
         "</div>" +
-        '<button type="button" class="card__order" data-order="' + esc(product.id) + '">' +
-          "<span>Order</span>" +
+        '<button type="button" class="card__order" data-order="' + esc(product.id) + '"' +
+          (soldOut ? ' disabled aria-disabled="true"' : "") + ">" +
+          "<span>" + (soldOut ? "Sold out" : "Order") + "</span>" +
           '<svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg>' +
         "</button>" +
       "</div>" +
