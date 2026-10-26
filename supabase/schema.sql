@@ -213,7 +213,14 @@ create index if not exists orders_status_idx     on public.orders (status);
 
 -- =========================================================== row level security
 -- Anonymous writes need the table grant as well as the policy, or the request is
--- rejected before any policy is consulted.
+-- rejected before any policy is consulted. The REVOKEs come first because
+-- Supabase's default privileges give `anon` and `authenticated` ALL on every new
+-- table in `public`, including TRUNCATE and REFERENCES — neither of which RLS
+-- can restrain.
+revoke all on public.categories from anon, authenticated;
+revoke all on public.products   from anon, authenticated;
+revoke all on public.orders     from anon, authenticated;
+
 grant usage on schema public to anon, authenticated;
 grant select, insert, update, delete on public.products   to anon, authenticated;
 grant select, insert, update, delete on public.categories to anon, authenticated;
