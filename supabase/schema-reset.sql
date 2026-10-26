@@ -188,7 +188,17 @@ on conflict (slug) do update
 
 -- ============================================================= 4. privileges
 -- A role that cannot touch the table never reaches a policy, so the GRANT has
--- to come first. These are the minimum the storefront needs.
+-- to come first. These are the minimum the storefront needs — and on Supabase
+-- that means taking something away first: the project's default privileges
+-- hand `anon` and `authenticated` ALL on every new table in `public`
+-- (`arwdDxtm` — insert, select, update, delete, truncate, references, trigger,
+-- maintain). Row level security makes most of that inert, but TRUNCATE and
+-- REFERENCES are not subject to RLS at all, so they are revoked rather than
+-- relied upon.
+revoke all on public.categories from anon, authenticated;
+revoke all on public.products   from anon, authenticated;
+revoke all on public.orders     from anon, authenticated;
+
 grant usage on schema public to anon, authenticated;
 
 grant select, insert, update, delete on public.products   to anon, authenticated;
