@@ -25,9 +25,10 @@ npm run preview           # serves dist/ on http://localhost:4173
 npm test                  # unit tests → production build → end-to-end suite
 ```
 
-The database itself is one SQL file: run [`supabase/schema.sql`](supabase/schema.sql) in the
-Supabase SQL editor, then optionally [`supabase/seed.sql`](supabase/seed.sql) for the original ten
-pieces. See [Supabase setup](#supabase-setup).
+The database is one SQL file: run [`supabase/schema.sql`](supabase/schema.sql) in the Supabase SQL
+editor, then optionally [`supabase/seed.sql`](supabase/seed.sql) for the original ten pieces. For a
+clean slate — wipe and rebuild in one paste —
+[`supabase/schema-reset.sql`](supabase/schema-reset.sql). See [Supabase setup](#supabase-setup).
 
 **Studio access** is one passphrase (`creewrld.com`), compared in the browser and remembered in
 `sessionStorage` for the tab. There is no Supabase Auth, no account and no email field.
@@ -86,12 +87,18 @@ instead of rendering an empty shop:
    upsert. That means the file repairs a project that already has these tables from an earlier or
    different script — the missing columns are added and existing rows are kept, never dropped.
 
+   Two renames are carried across automatically: a project whose stock column is `is_active` gets it
+   copied into `in_stock`, and an order table with `phone` / `delivery_location` / `total` gets those
+   values copied into `customer_phone` / `delivery_area` / `total_price`.
+
    There is one shape it cannot repair: a legacy table with its own `not null` column that this
    schema knows nothing about (e.g. `categories.code text not null`), because inserts cannot supply a
-   value for it. In that case run the destructive
-   [`supabase/reset.sql`](supabase/reset.sql) first — it drops only the three tables and the trigger —
-   then re-run `schema.sql` (and `seed.sql` if you want the starter pieces). Only do that on a project
-   with no real content yet.
+   value for it. In that case run
+   [`supabase/schema-reset.sql`](supabase/schema-reset.sql) instead — a single paste that drops the
+   three tables and any leftover enum types, rebuilds the schema, re-seeds the four categories and
+   re-applies every policy, grant, bucket and the Realtime publication. It deletes every product and
+   every order, so only run it when that is what you want (or on a throwaway project), then run
+   `seed.sql` if you want the starter pieces back.
 2. **Allow anonymous writes.** The studio is unlocked with a passphrase in the browser, so the page
    has no Supabase session to write with. Run
    [`supabase/studio-access.sql`](supabase/studio-access.sql) once to grant the anonymous role the
@@ -105,6 +112,20 @@ instead of rendering an empty shop:
 4. **Check Realtime (optional).** *Database → Replication* — the `products` table is added to the
    publication by the schema. If Realtime is off the storefront still refreshes when the tab
    regains focus.
+
+### What the schema holds
+
+Three tables, no views, no functions beyond the `updated_at` trigger:
+
+| table | columns |
+| --- | --- |
+| `categories` | `id` uuid, `name` text unique, `slug` text unique, `sort_order` int, `created_at` |
+| `products` | `id` uuid, `title` text, `description` text, `price` numeric(12,2) in KSh, `image_url` text, `category_id` uuid → `categories(id) on delete set null`, `in_stock` bool default true, `created_at`, plus `condition`, `sizes` and `updated_at` which the storefront and studio read |
+| `orders` | `id` uuid, `customer_name`, `customer_phone`, `delivery_area`, `items` jsonb (array), `total_price` numeric, `status` text default `pending`, `created_at`, plus the delivery breakdown (`zone`, `zone_label`, `zone_fee`, `subtotal`, `item_count`, `source`) |
+
+`in_stock = false` is what the studio calls **sold out**: the piece keeps its place on the grid,
+marked and unorderable. `price` is stored in whole Kenyan shillings and formatted as `KSh 6,500` in
+the UI.
 
 ### Studio access
 
@@ -231,12 +252,12 @@ src/
     img/*.jpg               product photography
 supabase/
   schema.sql                tables, RLS, bucket, trigger — run this first, safe to re-run
+  schema-reset.sql          DESTRUCTIVE: wipe + rebuild everything in one paste
   studio-access.sql         grants anonymous writes for the passphrase gate — read the warning
-  reset.sql                 destructive reset, only for a throwaway project
   seed.sql                  the original ten pieces (fresh database only)
 tests/
-  unit/*.test.js            Vitest (75 assertions)
-  e2e.mjs                   Puppeteer + axe-core against the production build (162 checks)
+  unit/*.test.js            Vitest (77 assertions)
+  e2e.mjs                   Puppeteer + axe-core against the production build (228 checks)
   supabase-stub.mjs         in-process fake Supabase the e2e suite talks to
 ```
 
@@ -418,7 +439,7 @@ validation, the exact WhatsApp payload, cart maths and quantity caps, cart recon
 changed catalogue, the passphrase comparison and its storage flag (including blocked storage), and a
 rejected write surfacing instead of "saving".
 
-**E2E (226 checks)** — a real Chromium session against `dist/`:
+**E2E (228 checks)** — a real Chromium session against `dist/`:
 
 - *Build integrity*: content-hashed JS/CSS, two font preloads pointing at hashed `.woff2` files
   that return `200 font/woff2`, all three typefaces loaded via `document.fonts`, product photos

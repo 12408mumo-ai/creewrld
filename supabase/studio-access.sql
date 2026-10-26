@@ -81,30 +81,49 @@ create policy "anyone can place an order"
 
 
 -- ----------------------------------------------------------- storage objects
-drop policy if exists "product images are public"    on storage.objects;
-drop policy if exists "staff upload product images"  on storage.objects;
-drop policy if exists "staff update product images"  on storage.objects;
-drop policy if exists "staff delete product images"  on storage.objects;
-drop policy if exists "studio uploads product images" on storage.objects;
-drop policy if exists "studio updates product images" on storage.objects;
-drop policy if exists "studio deletes product images" on storage.objects;
+-- Supabase-only: guarded so this file can also be run against a plain Postgres
+-- database (where `storage` does not exist) without failing at the last step.
+do $storage$
+begin
+  if to_regclass('storage.objects') is null then
+    raise notice 'storage schema not found — skipping the product-images policies.';
+    return;
+  end if;
 
-create policy "product images are public"
-  on storage.objects for select
-  using (bucket_id = 'product-images');
+  execute 'drop policy if exists "product images are public"    on storage.objects';
+  execute 'drop policy if exists "staff upload product images"  on storage.objects';
+  execute 'drop policy if exists "staff update product images"  on storage.objects';
+  execute 'drop policy if exists "staff delete product images"  on storage.objects';
+  execute 'drop policy if exists "studio uploads product images" on storage.objects';
+  execute 'drop policy if exists "studio updates product images" on storage.objects';
+  execute 'drop policy if exists "studio deletes product images" on storage.objects';
 
-create policy "studio uploads product images"
-  on storage.objects for insert
-  to anon, authenticated
-  with check (bucket_id = 'product-images');
+  execute $pol$
+    create policy "product images are public"
+      on storage.objects for select
+      using (bucket_id = 'product-images')
+  $pol$;
 
-create policy "studio updates product images"
-  on storage.objects for update
-  to anon, authenticated
-  using (bucket_id = 'product-images')
-  with check (bucket_id = 'product-images');
+  execute $pol$
+    create policy "studio uploads product images"
+      on storage.objects for insert
+      to anon, authenticated
+      with check (bucket_id = 'product-images')
+  $pol$;
 
-create policy "studio deletes product images"
-  on storage.objects for delete
-  to anon, authenticated
-  using (bucket_id = 'product-images');
+  execute $pol$
+    create policy "studio updates product images"
+      on storage.objects for update
+      to anon, authenticated
+      using (bucket_id = 'product-images')
+      with check (bucket_id = 'product-images')
+  $pol$;
+
+  execute $pol$
+    create policy "studio deletes product images"
+      on storage.objects for delete
+      to anon, authenticated
+      using (bucket_id = 'product-images')
+  $pol$;
+end
+$storage$;

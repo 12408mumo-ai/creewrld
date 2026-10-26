@@ -112,8 +112,15 @@ const uuid = () => crypto.randomUUID();
  * @param {string} options.password  its password
  */
 export function createSupabaseStub({ email = "owner@creewrld.test", password = "creewrld" } = {}) {
+  /**
+   * Rows as the database would hand them back: the seed fixture omits the
+   * columns it does not care about, and `in_stock` defaults to true there just
+   * as it does in schema-reset.sql.
+   */
+  const freshRows = () => SEED_ROWS.map((row) => ({ in_stock: true, ...row }));
+
   const state = {
-    products: SEED_ROWS.map((row) => ({ ...row })),
+    products: freshRows(),
     orders: [],
     uploads: [],
     /** Every request the client made, for assertions. */
@@ -394,7 +401,7 @@ export function createSupabaseStub({ email = "owner@creewrld.test", password = "
     uploads: () => state.uploads,
     calls: () => state.calls,
     reset() {
-      state.products = SEED_ROWS.map((row) => ({ ...row }));
+      state.products = freshRows();
       state.orders = [];
       state.uploads = [];
       state.calls = [];

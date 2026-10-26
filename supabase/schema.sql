@@ -56,13 +56,13 @@ create table if not exists public.products (
   id           uuid primary key default gen_random_uuid(),
   title        text not null check (char_length(trim(title)) >= 2),
   category_id  uuid,
-  price        integer not null check (price > 0),           -- whole KSh
+  price        numeric(12,2) not null check (price > 0),    -- whole KSh
   condition    text  not null default 'Excellent'
                check (condition in ('New','Like New','Excellent','Very Good','Good')),
   sizes        text[] not null default '{}',
   image_url    text not null,
   description  text not null default '',
-  is_active    boolean not null default true,
+  in_stock     boolean not null default true,               -- false = sold out
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
 );
@@ -70,14 +70,39 @@ create table if not exists public.products (
 alter table public.products add column if not exists id          uuid        default gen_random_uuid();
 alter table public.products add column if not exists title       text;
 alter table public.products add column if not exists category_id uuid;
-alter table public.products add column if not exists price       integer;
+alter table public.products add column if not exists price       numeric(12,2);
 alter table public.products add column if not exists condition   text        not null default 'Excellent';
 alter table public.products add column if not exists sizes       text[]      not null default '{}';
 alter table public.products add column if not exists image_url   text;
 alter table public.products add column if not exists description text        not null default '';
-alter table public.products add column if not exists is_active   boolean     not null default true;
+alter table public.products add column if not exists in_stock    boolean     not null default true;
 alter table public.products add column if not exists created_at  timestamptz not null default now();
 alter table public.products add column if not exists updated_at  timestamptz not null default now();
+
+-- A project created before this schema called the stock column `is_active` and
+-- priced in whole integers. Neither rename can be done with `add column`, so
+-- both are converted here — once, and without ever resurrecting a sold-out
+-- piece (`in_stock` is only ever lowered, never raised, from the old column).
+do $upgrade$
+begin
+  if exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'products'
+       and column_name = 'price' and data_type = 'integer'
+  ) then
+    alter table public.products alter column price type numeric(12,2);
+  end if;
+
+  if exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'products'
+       and column_name = 'is_active'
+  ) then
+    update public.products set in_stock = false
+     where is_active = false and in_stock = true;
+  end if;
+end
+$upgrade$;
 
 create index if not exists products_created_at_idx  on public.products (created_at desc);
 create index if not exists products_category_id_idx on public.products (category_id);
@@ -126,34 +151,61 @@ create table if not exists public.orders (
   id                uuid primary key default gen_random_uuid(),
   created_at        timestamptz not null default now(),
   customer_name     text not null,
-  phone             text not null,
-  delivery_location text not null,
+  customer_phone    text not null,
+  delivery_area     text not null,
   zone              text not null,
   zone_label        text not null default '',
   zone_fee          integer not null default 0,
   subtotal          integer not null default 0,
-  total             integer not null default 0,
+  total_price       numeric(12,2) not null default 0,
   item_count        integer not null default 0,
   items             jsonb not null default '[]'::jsonb,
   source            text not null default 'product',
-  status            text not null default 'new'
-                    check (status in ('new','contacted','paid','dispatched','cancelled'))
+  status            text not null default 'pending'
+                    check (status in ('pending','new','contacted','paid','dispatched','cancelled'))
 );
 
 alter table public.orders add column if not exists id                uuid        default gen_random_uuid();
 alter table public.orders add column if not exists created_at        timestamptz not null default now();
 alter table public.orders add column if not exists customer_name     text;
-alter table public.orders add column if not exists phone             text;
-alter table public.orders add column if not exists delivery_location text;
+alter table public.orders add column if not exists customer_phone    text;
+alter table public.orders add column if not exists delivery_area     text;
 alter table public.orders add column if not exists zone              text;
 alter table public.orders add column if not exists zone_label        text        not null default '';
 alter table public.orders add column if not exists zone_fee          integer     not null default 0;
 alter table public.orders add column if not exists subtotal          integer     not null default 0;
-alter table public.orders add column if not exists total             integer     not null default 0;
+alter table public.orders add column if not exists total_price       numeric(12,2) not null default 0;
 alter table public.orders add column if not exists item_count        integer     not null default 0;
 alter table public.orders add column if not exists items             jsonb       not null default '[]'::jsonb;
 alter table public.orders add column if not exists source            text        not null default 'product';
 alter table public.orders add column if not exists status            text        not null default 'new';
+
+-- Same story for the order columns: carry the old names across once so the
+-- table editor reads sensibly after the rename.
+do $upgrade_orders$
+begin
+  if exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'orders' and column_name = 'phone'
+  ) then
+    execute 'update public.orders set customer_phone = phone where customer_phone is null';
+  end if;
+
+  if exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'orders' and column_name = 'delivery_location'
+  ) then
+    execute 'update public.orders set delivery_area = delivery_location where delivery_area is null';
+  end if;
+
+  if exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'orders' and column_name = 'total'
+  ) then
+    execute 'update public.orders set total_price = total where total_price = 0';
+  end if;
+end
+$upgrade_orders$;
 
 create index if not exists orders_created_at_idx on public.orders (created_at desc);
 create index if not exists orders_status_idx     on public.orders (status);
@@ -229,43 +281,64 @@ $$;
 
 
 -- ================================================================ storage bucket
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values (
-  'product-images',
-  'product-images',
-  true,
-  6291456, -- 6 MB, matching the form's client-side guard
-  array['image/jpeg','image/png','image/webp','image/avif']
-)
-on conflict (id) do update
-  set public             = true,
-      file_size_limit    = excluded.file_size_limit,
-      allowed_mime_types = excluded.allowed_mime_types;
+-- Supabase-only: a plain Postgres database has no `storage` schema, so the whole
+-- block is skipped there instead of failing the rest of the script.
+do $storage$
+begin
+  if to_regclass('storage.buckets') is null or to_regclass('storage.objects') is null then
+    raise notice 'storage schema not found — skipping the product-images bucket (expected outside Supabase).';
+    return;
+  end if;
 
-drop policy if exists "product images are public"   on storage.objects;
-drop policy if exists "staff upload product images" on storage.objects;
-drop policy if exists "staff update product images" on storage.objects;
-drop policy if exists "staff delete product images" on storage.objects;
-drop policy if exists "studio uploads product images" on storage.objects;
-drop policy if exists "studio updates product images" on storage.objects;
-drop policy if exists "studio deletes product images" on storage.objects;
+  execute $bucket$
+    insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    values (
+      'product-images',
+      'product-images',
+      true,
+      6291456,
+      array['image/jpeg', 'image/png', 'image/webp', 'image/avif']
+    )
+    on conflict (id) do update
+      set public             = true,
+          file_size_limit    = excluded.file_size_limit,
+          allowed_mime_types = excluded.allowed_mime_types
+  $bucket$;
 
-create policy "product images are public"
-  on storage.objects for select
-  using (bucket_id = 'product-images');
+  execute 'drop policy if exists "product images are public"   on storage.objects';
+  execute 'drop policy if exists "staff upload product images" on storage.objects';
+  execute 'drop policy if exists "staff update product images" on storage.objects';
+  execute 'drop policy if exists "staff delete product images" on storage.objects';
+  execute 'drop policy if exists "studio uploads product images" on storage.objects';
+  execute 'drop policy if exists "studio updates product images" on storage.objects';
+  execute 'drop policy if exists "studio deletes product images" on storage.objects';
 
-create policy "studio uploads product images"
-  on storage.objects for insert
-  to anon, authenticated
-  with check (bucket_id = 'product-images');
+  execute $pol$
+    create policy "product images are public"
+      on storage.objects for select
+      using (bucket_id = 'product-images')
+  $pol$;
 
-create policy "studio updates product images"
-  on storage.objects for update
-  to anon, authenticated
-  using (bucket_id = 'product-images')
-  with check (bucket_id = 'product-images');
+  execute $pol$
+    create policy "studio uploads product images"
+      on storage.objects for insert
+      to anon, authenticated
+      with check (bucket_id = 'product-images')
+  $pol$;
 
-create policy "studio deletes product images"
-  on storage.objects for delete
-  to anon, authenticated
-  using (bucket_id = 'product-images');
+  execute $pol$
+    create policy "studio updates product images"
+      on storage.objects for update
+      to anon, authenticated
+      using (bucket_id = 'product-images')
+      with check (bucket_id = 'product-images')
+  $pol$;
+
+  execute $pol$
+    create policy "studio deletes product images"
+      on storage.objects for delete
+      to anon, authenticated
+      using (bucket_id = 'product-images')
+  $pol$;
+end
+$storage$;
