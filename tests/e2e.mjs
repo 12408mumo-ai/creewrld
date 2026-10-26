@@ -558,7 +558,29 @@ async function run() {
     await wait(250);
     ok("login modal opens", await isVisible(page, "#loginModal"));
     ok("there is no email field any more", (await count(page, "#lfEmail")) === 0);
+    ok("no email input of any kind", (await count(page, '#loginModal input[type="email"]')) === 0);
+    ok(
+      "no placeholder mentions an address",
+      !(await page.evaluate(() =>
+        Array.from(document.querySelectorAll("#loginModal input")).some((node) =>
+          /@|gmail|email/i.test(node.placeholder || "")
+        )
+      ))
+    );
     ok("the modal asks for a password only", (await count(page, "#loginModal input[type=password]")) === 1);
+    ok("that is the only input in the form", (await count(page, "#loginForm input")) === 1);
+    ok("the title reads Studio Access", (await text(page, "#loginTitle")) === "Studio Access", await text(page, "#loginTitle"));
+    ok(
+      "the password placeholder is the dot mask",
+      (await page.evaluate(() => document.querySelector("#lfPass").placeholder)) === "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022",
+      await page.evaluate(() => document.querySelector("#lfPass").placeholder)
+    );
+    ok(
+      "the button reads ENTER STUDIO",
+      (await text(page, "#loginSubmit")).toLowerCase() === "enter studio" &&
+        (await page.evaluate(() => window.getComputedStyle(document.querySelector("#loginSubmit")).textTransform)) === "uppercase",
+      await text(page, "#loginSubmit")
+    );
     ok(
       "the helper text explains the passphrase",
       (await text(page, "#loginModal .modal__sub")) ===

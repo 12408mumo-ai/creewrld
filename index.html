@@ -413,13 +413,13 @@
 <div class="modal" id="loginModal" role="dialog" aria-modal="true" aria-labelledby="loginTitle" aria-hidden="true">
   <div class="modal__scrim" data-close></div>
   <div class="modal__panel modal__panel--small">
-    <button type="button" class="icon-btn modal__close" data-close aria-label="Close login">
+    <button type="button" class="icon-btn modal__close" data-close aria-label="Close studio access">
       <svg class="ico" aria-hidden="true"><use href="#i-close"/></svg>
     </button>
 
     <div class="modal__head">
-      <p class="modal__kicker">Merchant access</p>
-      <h2 class="modal__title" id="loginTitle">Studio <em>login</em></h2>
+      <p class="modal__kicker">Studio only</p>
+      <h2 class="modal__title" id="loginTitle">Studio <em>Access</em></h2>
       <p class="modal__sub">Enter the studio passphrase to access merchant controls and manage inventory.</p>
     </div>
 
@@ -428,7 +428,7 @@
         <label for="lfPass">Password</label>
         <input id="lfPass" name="password" type="password" autocomplete="off"
           autocapitalize="none" autocorrect="off" spellcheck="false"
-          placeholder="Enter passphrase" required />
+          placeholder="••••••••" required />
       </div>
       <p class="field__err field__err--block" id="loginError" role="alert" hidden></p>
       <button type="submit" class="btn btn--primary btn--wide" id="loginSubmit">Enter studio</button>
