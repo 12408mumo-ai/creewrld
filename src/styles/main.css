@@ -1742,7 +1742,7 @@ select option { background: #0b0b0b; color: #fff; }
   color: #e2837b;
 }
 .field__err[hidden] { display: none; }
-/* A refused sign-in deserves more weight than a field hint: it is the whole
+/* A wrong passphrase deserves more weight than a field hint: it is the whole
    answer to the form, so it gets a panel instead of a floating line. */
 .field__err--block {
   display: block;
@@ -1755,19 +1755,6 @@ select option { background: #0b0b0b; color: #fff; }
   letter-spacing: 0.04em;
 }
 .field__err--block[hidden] { display: none; }
-/* Supabase's own words, kept quiet under the sentence. Debugging a refused
-   sign-in is impossible without it and noise with it, so it sits at 11.5px
-   in the metadata grey, separated by a hairline. */
-.field__err__detail {
-  margin-top: 7px;
-  padding-top: 7px;
-  border-top: 1px solid rgba(226, 131, 123, 0.22);
-  font-size: 11.5px;
-  line-height: 1.5;
-  letter-spacing: 0.04em;
-  color: #a8a0a0;
-}
-.field__err__detail[hidden] { display: none; }
 .field__hint {
   font-weight: 400;
   font-family: var(--font-mono);

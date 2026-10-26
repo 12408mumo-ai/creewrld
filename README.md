@@ -5,9 +5,9 @@ Built with **Vite**: editorial Didone typography, the official Gothic **CW** mon
 continuous 3D Y-axis spin, a filterable catalogue, and a WhatsApp-direct order flow with a live
 Nairobi delivery calculator.
 
-**Live backend: Supabase.** The catalogue, merchant authentication, product image uploads and every
-order all live in Supabase — there is no demo mode and no seeded client-side data. Sign in with the
-studio's email and password and the merchant controls appear; the database decides who may write.
+**Live backend: Supabase.** The catalogue, product image uploads and every order live in Supabase —
+there is no demo mode and no seeded client-side data. The merchant controls appear once the studio
+passphrase is entered. See [Studio access](#studio-access) for what that gate is and is not worth.
 
 No UI framework. Vite bundles, hashes assets and runs the dev server; Supabase is the only runtime
 dependency (`@supabase/supabase-js`). Everything else is hand-written HTML, CSS and ES modules.
@@ -29,14 +29,13 @@ The database itself is one SQL file: run [`supabase/schema.sql`](supabase/schema
 Supabase SQL editor, then optionally [`supabase/seed.sql`](supabase/seed.sql) for the original ten
 pieces. See [Supabase setup](#supabase-setup).
 
-**Merchant sign-in** uses a real Supabase Auth account (the studio's Gmail address and password) —
-create it under *Authentication → Users → Add user*. The form trims and lower-cases the address
-before sending it, so case never matters. There are no bundled credentials.
+**Studio access** is one passphrase (`creewrld.com`), compared in the browser and remembered in
+`sessionStorage` for the tab. There is no Supabase Auth, no account and no email field.
 
 Adding a piece is **merchant-only**: there is no `+ Add Product` control in the public header.
-Sign in with `Login / Admin` — the header link then reads `Logout`, and the merchant strip exposes
-`+ New product` (plus per-card edit overlays). Clicking `Logout` ends the Supabase session and
-returns the storefront to shopper view.
+Click `Login / Admin`, enter the passphrase — the header link then reads `Logout` and the merchant
+strip exposes `+ New product` (plus per-card edit overlays). `Logout` clears the flag and returns the
+storefront to shopper view.
 
 Requirements: Node **20.19+**. The e2e suite additionally needs a local Chrome/Chromium — see
 [Verification](#verification).
@@ -91,12 +90,12 @@ instead of rendering an empty shop:
    [`supabase/reset.sql`](supabase/reset.sql) first — it drops only the three tables and the trigger —
    then re-run `schema.sql` (and `seed.sql` if you want the starter pieces). Only do that on a project
    with no real content yet.
-2. **Create the merchant account.** *Authentication → Users → Add user* — the studio's Gmail
-   address and a password. The login form is labelled **Studio Gmail** and normalises what is typed
-   (trimmed, lower-cased) before handing it to Supabase Auth, so the address stored here only has to
-   match; it does not have to be typed in any particular case. Any authenticated user may manage the
-   catalogue; with a single studio account that is exactly right. If you later add staff, tighten the
-   product policies to a specific role.
+2. **Allow anonymous writes.** The studio is unlocked with a passphrase in the browser, so the page
+   has no Supabase session to write with. Run
+   [`supabase/studio-access.sql`](supabase/studio-access.sql) once to grant the anonymous role the
+   catalogue writes it now needs. **Read the warning at the top of that file first** — it trades
+   database-enforced access for a browser-side gate. `schema.sql` already contains the same policies
+   for a fresh project.
 3. **Publish the starter catalogue (optional).** Run [`supabase/seed.sql`](supabase/seed.sql) on a
    fresh database to insert the original ten pieces with their bundled photographs. It is a no-op
    once any product exists. You can also do this from the storefront: sign in with an empty
@@ -105,44 +104,32 @@ instead of rendering an empty shop:
    publication by the schema. If Realtime is off the storefront still refreshes when the tab
    regains focus.
 
-### If the studio refuses a sign-in
+### Studio access
 
-A refused sign-in shows the sentence
+The passphrase is `creewrld.com`, compared in the browser (`src/data/studio.js`) after trimming and
+folding case, and remembered in `sessionStorage` under the key `isAdmin`.
 
-> Invalid Gmail or password. Please verify your credentials or confirm the account in the
-> Supabase Dashboard.
+| Behaviour | Why |
+| --- | --- |
+| Survives a reload | `sessionStorage` outlives navigation in the same tab |
+| Does **not** survive a new tab or a browser restart | `sessionStorage` is per-tab by design — closing the tab ends the studio session |
+| `Logout` clears it immediately | `sessionStorage.removeItem("isAdmin")`, controls hidden, header back to `LOGIN / ADMIN` |
+| Nothing written to `localStorage` | so a shared device does not keep admin around |
 
-and, underneath it in grey, Supabase's own answer — e.g. `Invalid login credentials
-(invalid_grant, 400)`. The browser console also prints the three facts that explain a refusal:
+**What this gate is worth.** The expected passphrase is inside the JavaScript bundle, and
+administration runs with the public anon key. Anyone who reads the bundle can find it. So:
 
-```
-Attempting login for: 12408mumo@gmail.com
-[auth] project: https://<ref>.supabase.co | password chars: 9
-Supabase Auth Error: Invalid login credentials
-```
+- it keeps visitors out of the merchant controls, and it is genuinely enough for a shop where the
+  catalogue is not a secret;
+- it is **not** a security boundary. With `studio-access.sql` applied, anyone holding the anon key
+  (which ships in the bundle) can also write the catalogue directly, without the passphrase at all.
 
-`invalid_credentials` / `invalid_grant` means Supabase refused the **address and password
-together**. It will not say which was wrong — that is deliberate, so addresses cannot be
-enumerated — which leaves four things to check, in this order:
+If that is unacceptable, do not run `studio-access.sql`: keep the original `to authenticated`
+policies from `schema.sql` and use a real Supabase Auth session (the shape this project had before
+commit `d821995`). That is the only arrangement where the database itself decides who may write.
 
-1. **Same project?** Compare the `[auth] project:` URL in the console with the project open in the
-   dashboard. A user created in project A cannot sign in through project B's keys, and this is the
-   most common cause of "it exists, but it is refused". The URL is in
-   *Vercel → Settings → Environment Variables* for the environment you are viewing (a Preview
-   deployment does not inherit Production variables unless they were scoped to it).
-2. **Same address?** The console prints exactly what was sent, after trimming and lower-casing.
-   Compare it character by character with the Dashboard row — `12408mumo` vs `12408Mumo` is fine,
-   a stray `.` or a different number is not.
-3. **Confirmed?** *Authentication → Users* has a **Confirmed** column. A user added without *Auto
-   Confirm User* exists but cannot sign in: open the user → **Confirm email**.
-4. **Password?** If the address is right and confirmed, the password is the answer. Use the row's
-   menu → **Reset password**, or delete the user and re-add it with a password you type carefully.
-   The form trims surrounding whitespace from the password (a phone keyboard adds it on autofill);
-   if that changes what you typed and the sign-in is refused, it retries once with the password
-   exactly as entered, so a deliberate leading or trailing space still works.
-
-If the modal says it has no Supabase credentials, the build has no `NEXT_PUBLIC_SUPABASE_URL` /
-`NEXT_PUBLIC_SUPABASE_ANON_KEY` — nothing about the account can be the problem there.
+The passphrase can be changed in one place — `STUDIO_PASSPHRASE` in `src/data/studio.js` — and the
+site must be redeployed for it to take effect.
 
 ### Data model
 
@@ -190,7 +177,7 @@ src/
   store.js                  state + Supabase orchestration (single source of truth)
   data/                     the only modules that talk to the backend
     products.js             fetch / insert / update / delete / realtime
-    auth.js                 signInWithPassword, session, onAuthStateChange
+    studio.js               the passphrase check + the sessionStorage flag
     orders.js               order insert
     storage.js              image upload → product-images bucket
   lib/
@@ -209,10 +196,11 @@ src/
     img/*.jpg               product photography
 supabase/
   schema.sql                tables, RLS, bucket, trigger — run this first, safe to re-run
+  studio-access.sql         grants anonymous writes for the passphrase gate — read the warning
   reset.sql                 destructive reset, only for a throwaway project
   seed.sql                  the original ten pieces (fresh database only)
 tests/
-  unit/*.test.js            Vitest (57 assertions)
+  unit/*.test.js            Vitest (69 assertions)
   e2e.mjs                   Puppeteer + axe-core against the production build (162 checks)
   supabase-stub.mjs         in-process fake Supabase the e2e suite talks to
 ```
@@ -268,8 +256,8 @@ network. Views never query the database — they render `state` and subscribe to
 | --- | --- |
 | Boot | `products.select("*, categories(name, slug)")` + `categories.select(...)` |
 | Category tab | filtered in memory from the live catalogue, counts included |
-| Merchant sign-in | `auth.signInWithPassword({ email: email.trim().toLowerCase(), password })` |
-| Session | `auth.onAuthStateChange()` → `state.admin`, so controls survive a refresh |
+| Studio unlock | passphrase compared in `data/studio.js` → `sessionStorage.isAdmin` |
+| Session | `restoreStudio()` on boot reads that flag → `state.admin` |
 | Add / edit | `products.insert()` / `products.update().eq("id", …)` |
 | Delete | `products.delete().eq("id", …)` |
 | Image upload | `storage.from("product-images").upload()` → `getPublicUrl()` → `image_url` |
@@ -388,12 +376,13 @@ down when the header condenses on scroll, and again at the mobile breakpoints.
 `npm test` runs three layers, and the e2e layer targets the **built** output (`vite preview` on
 `dist/`), not the dev server:
 
-**Unit (Vitest, 57 assertions)** — row ⇄ app mapping (including `category_id` resolution and
+**Unit (Vitest, 69 assertions)** — row ⇄ app mapping (including `category_id` resolution and
 category sorting), currency formatting, HTML escaping, size parsing, delivery zone fees, customer
 validation, the exact WhatsApp payload, cart maths and quantity caps, cart reconciliation against a
-changed catalogue, session transitions, and a rejected write surfacing instead of "saving".
+changed catalogue, the passphrase comparison and its storage flag (including blocked storage), and a
+rejected write surfacing instead of "saving".
 
-**E2E (162 checks)** — a real Chromium session against `dist/`:
+**E2E (188 checks)** — a real Chromium session against `dist/`:
 
 - *Build integrity*: content-hashed JS/CSS, two font preloads pointing at hashed `.woff2` files
   that return `200 font/woff2`, all three typefaces loaded via `document.fonts`, product photos
@@ -401,9 +390,10 @@ changed catalogue, session transitions, and a rejected write surfacing instead o
   Add Product button in the shopper header**.
 - *Live data*: the grid renders exactly what the database returns, tabs and counts come from the
   `categories` table, and no catalogue or session key is written to `localStorage`.
-- *Supabase Auth*: a wrong password is refused and leaves the shopper view intact; a correct one
-  goes through the `grant_type=password` endpoint and reveals the merchant strip; the session
-  survives a reload via the SDK's own token.
+- *Studio access*: a wrong passphrase is refused in red without touching the network and leaves the
+  shopper view intact; the correct one — typed with stray spaces and odd case — reveals the merchant
+  strip, writes `sessionStorage.isAdmin`, and survives a reload; `Logout` reverses all of it. A
+  second tab starts locked, and no `/auth/v1/*` request is ever made.
 - *Merchant writes*: insert (with the category resolved to its FK, the price as an integer and the
   sizes as an array), a `PATCH` scoped to one row, and a `DELETE` scoped to one row — each asserted
   against the row the fake backend actually stored.
@@ -433,7 +423,7 @@ changed catalogue, session transitions, and a rejected write surfacing instead o
 **How the e2e suite reaches a backend.** There is no test mode in the bundle: the suite builds
 the real production output with throwaway credentials, launches it, and intercepts the HTTP traffic
 `@supabase/supabase-js` would send, answering it from `tests/supabase-stub.mjs` — a small stateful
-fake covering auth, PostgREST and Storage. So the assertions run against the real client and the
+fake covering PostgREST and Storage. So the assertions run against the real client and the
 real query shapes, without needing a live project or leaving test hooks in `dist/`.
 
 **Running the e2e suite.** It needs a Chrome binary. Defaults are auto-detected; otherwise:
@@ -465,12 +455,12 @@ The dev server runs with `host: true` on `0.0.0.0`, so it also works behind a pr
 
 ## Production notes
 
-1. **Access is enforced by the database.** `state.admin` is a rendering hint; RLS in
-   `supabase/schema.sql` is the actual gate. Keep it that way — never add a policy that trusts a
-   request body.
-2. **One merchant account is enough today.** Any authenticated user can manage the catalogue. If
-   more people get logins, move to a `staff` role or an allow-list and tighten the `products` and
-   `storage.objects` policies to it.
+1. **Access is a convenience lock, not a security boundary.** The passphrase ships in the bundle and
+   the write policies grant the anonymous role. Changing `STUDIO_PASSPHRASE` and redeploying keeps
+   casual visitors out; it does not stop anyone who reads the JavaScript. If the catalogue needs real
+   protection, put Supabase Auth back and restore the `to authenticated` policies.
+2. **The `studio-access.sql` grants are the decision worth revisiting.** Everything else about the
+   passphrase is cosmetic; that file is what actually permits writes from an anonymous browser.
 3. **The anon key is public by design.** It is in the bundle. Protect data with RLS, and keep the
    `service_role` key out of this repo and out of Vercel's client-side variables.
 4. **Images** are stored in the public `product-images` bucket, capped at 6 MB and four MIME types

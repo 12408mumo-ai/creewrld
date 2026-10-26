@@ -7,6 +7,12 @@
 --  these tables: every table is created if missing, then topped up with any
 --  columns it lacks. Existing rows are never dropped.
 --
+--  The storefront unlocks the studio with a passphrase rather than a Supabase
+--  Auth session, so catalogue writes are granted to `anon` as well as
+--  `authenticated`. Read the warning at the top of supabase/studio-access.sql
+--  before relying on this: a passphrase checked in the browser is not a
+--  security boundary. See "Studio access" in the README.
+--
 --  gen_random_uuid() is built into Postgres 13+, which every Supabase project
 --  runs, so no extension is required.
 -- ============================================================================
@@ -154,32 +160,45 @@ create index if not exists orders_status_idx     on public.orders (status);
 
 
 -- =========================================================== row level security
+-- Anonymous writes need the table grant as well as the policy, or the request is
+-- rejected before any policy is consulted.
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on public.products   to anon, authenticated;
+grant select, insert, update, delete on public.categories to anon, authenticated;
+grant insert                          on public.orders   to anon, authenticated;
+
 alter table public.categories enable row level security;
 alter table public.products   enable row level security;
 alter table public.orders     enable row level security;
 
--- Anyone can read the shop. Only a signed-in merchant can change it.
-drop policy if exists "categories are public"       on public.categories;
-drop policy if exists "categories writable by staff" on public.categories;
+-- Anyone can read the shop. Anyone holding the studio passphrase can change
+-- it — enforced in the browser, not here, because there is no session. See the
+-- warning in supabase/studio-access.sql.
+drop policy if exists "categories are public"          on public.categories;
+drop policy if exists "categories writable by staff"    on public.categories;
+drop policy if exists "categories writable from studio" on public.categories;
 create policy "categories are public"
   on public.categories for select
   using (true);
-create policy "categories writable by staff"
+create policy "categories writable from studio"
   on public.categories for all
-  to authenticated
+  to anon, authenticated
   using (true) with check (true);
 
-drop policy if exists "products are public"        on public.products;
-drop policy if exists "products writable by staff"  on public.products;
+drop policy if exists "products are public"           on public.products;
+drop policy if exists "products writable by staff"     on public.products;
+drop policy if exists "products writable from studio"  on public.products;
 create policy "products are public"
   on public.products for select
   using (true);
-create policy "products writable by staff"
+create policy "products writable from studio"
   on public.products for all
-  to authenticated
+  to anon, authenticated
   using (true) with check (true);
 
--- Shoppers are anonymous: they may create an order, never read the list back.
+-- Shoppers may create an order and never read the list back. With no Supabase
+-- Auth there is no "staff" role to read them, so orders are read in the
+-- Supabase table editor (or by adding a policy of your own).
 drop policy if exists "anyone can place an order" on public.orders;
 drop policy if exists "orders readable by staff"  on public.orders;
 drop policy if exists "orders updatable by staff" on public.orders;
@@ -188,18 +207,6 @@ create policy "anyone can place an order"
   on public.orders for insert
   to anon, authenticated
   with check (true);
-create policy "orders readable by staff"
-  on public.orders for select
-  to authenticated
-  using (true);
-create policy "orders updatable by staff"
-  on public.orders for update
-  to authenticated
-  using (true) with check (true);
-create policy "orders deletable by staff"
-  on public.orders for delete
-  to authenticated
-  using (true);
 
 
 -- ------------------------------------------------------------------- realtime
@@ -239,23 +246,26 @@ drop policy if exists "product images are public"   on storage.objects;
 drop policy if exists "staff upload product images" on storage.objects;
 drop policy if exists "staff update product images" on storage.objects;
 drop policy if exists "staff delete product images" on storage.objects;
+drop policy if exists "studio uploads product images" on storage.objects;
+drop policy if exists "studio updates product images" on storage.objects;
+drop policy if exists "studio deletes product images" on storage.objects;
 
 create policy "product images are public"
   on storage.objects for select
   using (bucket_id = 'product-images');
 
-create policy "staff upload product images"
+create policy "studio uploads product images"
   on storage.objects for insert
-  to authenticated
+  to anon, authenticated
   with check (bucket_id = 'product-images');
 
-create policy "staff update product images"
+create policy "studio updates product images"
   on storage.objects for update
-  to authenticated
+  to anon, authenticated
   using (bucket_id = 'product-images')
   with check (bucket_id = 'product-images');
 
-create policy "staff delete product images"
+create policy "studio deletes product images"
   on storage.objects for delete
-  to authenticated
+  to anon, authenticated
   using (bucket_id = 'product-images');

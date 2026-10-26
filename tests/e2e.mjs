@@ -548,160 +548,85 @@ async function run() {
     await wait(200);
 
     /* ------------------------------------------------------------------ admin */
-    section("Merchant mode (Supabase Auth)");
+    section("Studio access (passphrase)");
     ok("admin overlays are hidden for shoppers", (await page.evaluate(() => window.getComputedStyle(document.querySelector(".card__admin")).visibility)) !== "visible");
     ok("no add-product control in the shopper header", (await count(page, ".actions #merchantAdd")) === 0);
-    ok("the merchant strip is hidden while signed out", (await isVisible(page, "#merchantBar")) === false);
+    ok("the merchant strip is hidden while locked", (await isVisible(page, "#merchantBar")) === false);
+    ok("nothing is stored before the studio is unlocked", (await page.evaluate(() => !sessionStorage.getItem("isAdmin"))));
 
     await click(page, "#loginBtn");
     await wait(250);
     ok("login modal opens", await isVisible(page, "#loginModal"));
-    ok("login asks for an email, not a username", (await page.evaluate(() => document.querySelector("#lfEmail").type)) === "email");
+    ok("there is no email field any more", (await count(page, "#lfEmail")) === 0);
+    ok("the modal asks for a password only", (await count(page, "#loginModal input[type=password]")) === 1);
     ok(
-      "the field is labelled for Gmail",
-      (await text(page, '#loginModal label[for="lfEmail"]')) === "Studio Gmail",
-      await text(page, '#loginModal label[for="lfEmail"]')
+      "the helper text explains the passphrase",
+      (await text(page, "#loginModal .modal__sub")) ===
+        "Enter the studio passphrase to access merchant controls and manage inventory.",
+      await text(page, "#loginModal .modal__sub")
     );
     ok(
-      "the placeholder suggests a Gmail address",
-      (await page.evaluate(() => document.querySelector("#lfEmail").placeholder)) === "yourname@gmail.com",
-      await page.evaluate(() => document.querySelector("#lfEmail").placeholder)
-    );
-
-    // Deliberately messy input: leading/trailing spaces and mixed case.
-    await fill(page, "#lfEmail", "  Owner@CreeWRLD.TEST ");
-    await fill(page, "#lfPass", "wrong-password");
-
-    // The button must show that the request is in flight, so read it in the same
-    // tick as the submit — before the stub has had a chance to answer.
-    const busy = await page.evaluate(() => {
-      document.querySelector("#loginForm").dispatchEvent(
-        new Event("submit", { bubbles: true, cancelable: true })
-      );
-      const button = document.querySelector("#loginSubmit");
-      return { disabled: button.disabled, label: button.textContent, busy: button.getAttribute("aria-busy") };
-    });
-    ok("the submit button is disabled while signing in", busy.disabled === true, JSON.stringify(busy));
-    ok("the button says it is working", busy.label === "Signing in…", busy.label);
-    ok("the busy state is announced", busy.busy === "true", String(busy.busy));
-
-    await wait(700);
-    ok("wrong password is rejected by Supabase Auth", await isVisible(page, "#loginError"));
-    ok(
-      "the console reports what was sent",
-      errors.logged.some((line) => /Attempting login for: owner@creewrld\.test$/.test(line)),
-      errors.logged.filter((line) => /Attempting login/.test(line)).join(" | ")
-    );
-    ok(
-      "the console reports what Supabase answered",
-      errors.logged.some((line) => /Supabase Auth Error: Invalid login credentials/.test(line)),
-      errors.logged.filter((line) => /Supabase Auth Error/.test(line)).join(" | ")
-    );
-    ok(
-      "the refusal is the Gmail/password sentence",
-      (await text(page, "#loginErrorText")) ===
-        "Invalid Gmail or password. Please verify your credentials or confirm the account in the Supabase Dashboard.",
-      await text(page, "#loginErrorText")
-    );
-    ok(
-      "the button returns to its resting label",
-      (await page.evaluate(() => document.querySelector("#loginSubmit").textContent)) === "Enter studio"
-    );
-    ok(
-      "the error is styled as a panel, not a bare hint",
+      "the passphrase field cannot be auto-capitalised",
       (await page.evaluate(() => {
-        const node = document.querySelector("#loginError");
-        return node.classList.contains("field__err--block") &&
-          window.getComputedStyle(node).borderLeftWidth !== "0px";
+        const node = document.querySelector("#lfPass");
+        return node.getAttribute("autocapitalize") === "none" && node.getAttribute("autocorrect") === "off";
       })) === true
     );
-    ok(
-      "Supabase's own reason is shown underneath",
-      /invalid login credentials/i.test((await text(page, "#loginErrorDetail")) || ""),
-      await text(page, "#loginErrorDetail")
-    );
+    ok("desktop autofill is off for a shared passphrase", (await page.evaluate(() => document.querySelector("#lfPass").autocomplete)) === "off");
 
-    // Typing a new password dismisses the last refusal without a submit.
+    // Wrong passphrase: refused locally, in red, without touching the network.
+    const callsBefore = stub.calls().length;
+    await fill(page, "#lfPass", "creewrld");
+    await submit(page, "#loginForm");
+    await wait(300);
+    ok("a wrong passphrase is refused", await isVisible(page, "#loginError"));
+    ok(
+      "the refusal is the requested sentence",
+      (await text(page, "#loginError")) === "Incorrect studio passphrase. Please try again.",
+      await text(page, "#loginError")
+    );
+    ok(
+      "the message is red",
+      (await page.evaluate(() => window.getComputedStyle(document.querySelector("#loginError")).color)) === "rgb(226, 131, 123)",
+      await page.evaluate(() => window.getComputedStyle(document.querySelector("#loginError")).color)
+    );
+    ok("the field is emptied for the next attempt", (await page.evaluate(() => document.querySelector("#lfPass").value)) === "");
+    ok(
+      "the studio stays locked",
+      (await page.evaluate(() => document.body.classList.contains("is-admin"))) === false
+    );
+    ok("nothing was sent to the backend", stub.calls().length === callsBefore, String(stub.calls().length - callsBefore));
+    ok("no passphrase is remembered after a refusal", (await page.evaluate(() => !sessionStorage.getItem("isAdmin"))));
+
+    // Retyping clears the message without another submit.
     await page.evaluate(() => {
       const pass = document.querySelector("#lfPass");
       pass.value = "c";
       pass.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    ok("typing a new password clears the refusal", (await isVisible(page, "#loginError")) === false);
-    ok("the detail line goes with it", (await isVisible(page, "#loginErrorDetail")) === false);
+    ok("typing clears the refusal", (await isVisible(page, "#loginError")) === false);
 
-    const attempt = stub
-      .calls()
-      .filter((call) => call.path === "/auth/v1/token" && /grant_type=password/.test(call.query))
-      .pop();
-    ok(
-      "the address is trimmed and lower-cased before it is sent",
-      attempt && attempt.body.email === "owner@creewrld.test",
-      attempt && attempt.body.email
-    );
-    ok(
-      "the field shows the normalised address",
-      (await page.evaluate(() => document.querySelector("#lfEmail").value)) === "owner@creewrld.test"
-    );
-    ok(
-      "a rejected sign-in leaves the shopper view intact",
-      (await page.evaluate(() => document.body.classList.contains("is-admin"))) === false
-    );
-
-    // An account that exists but was never confirmed gets the same sentence as a
-    // wrong password — the form cannot tell them apart, and the Dashboard can.
-    await fill(page, "#lfEmail", "unconfirmed@creewrld.test");
-    await fill(page, "#lfPass", "creewrld");
-    await submit(page, "#loginForm");
-    await wait(600);
-    ok(
-      "an unconfirmed account gets the same refusal",
-      (await text(page, "#loginErrorText")) ===
-        "Invalid Gmail or password. Please verify your credentials or confirm the account in the Supabase Dashboard.",
-      await text(page, "#loginErrorText")
-    );
-
-    // Submitting again must clear the previous message, not stack next to it.
-    // Values are set without firing `input`, so the panel is still showing the
-    // unconfirmed-account refusal when the submit runs.
-    const cleared = await page.evaluate(() => {
-      document.querySelector("#lfEmail").value = "  OWNER@creewrld.TEST  ";
-      document.querySelector("#lfPass").value = "  creewrld  ";
-      document.querySelector("#loginForm").dispatchEvent(
-        new Event("submit", { bubbles: true, cancelable: true })
-      );
-      const node = document.querySelector("#loginError");
-      const text = document.querySelector("#loginErrorText");
-      return { text: text.textContent, hidden: node.hidden };
+    // The real passphrase, typed with spaces and odd case.
+    await page.evaluate(() => {
+      const pass = document.querySelector("#lfPass");
+      pass.value = "  CreeWrld.COM  ";
+      pass.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    ok("a new attempt clears the previous error text", cleared.text === "", cleared.text);
-    ok("a new attempt hides the previous error", cleared.hidden === true);
-
-    await wait(900);
-    ok("merchant mode enabled", (await page.evaluate(() => document.body.classList.contains("is-admin"))) === true);
-    ok("the login modal closed itself on sign-in", (await isVisible(page, "#loginModal")) === false);
-    ok("merchant strip appears", await isVisible(page, "#merchantBar"));
+    await submit(page, "#loginForm");
+    await wait(400);
+    ok("the correct passphrase unlocks the studio", (await page.evaluate(() => document.body.classList.contains("is-admin"))) === true);
+    // The panel fades before `visibility` flips, so poll rather than race it.
+    await until(async () => (await isVisible(page, "#loginModal")) === false, 4000);
+    ok("the modal closes itself", (await isVisible(page, "#loginModal")) === false);
+    ok("the unlock is stored in sessionStorage", (await page.evaluate(() => sessionStorage.getItem("isAdmin"))) === "true");
     ok("the header link becomes LOGOUT", (await text(page, "#loginBtnLabel")) === "Logout", await text(page, "#loginBtnLabel"));
+    ok("merchant strip appears", await isVisible(page, "#merchantBar"));
     ok(
-      "sign-in went through the password grant",
-      stub.calls().some((call) => call.path === "/auth/v1/token" && /grant_type=password/.test(call.query))
+      "no Supabase Auth call was made",
+      !stub.calls().some((call) => /^\/auth\/v1\/(token|user|logout)/.test(call.path)),
+      stub.calls().filter((call) => /auth/.test(call.path)).map((call) => call.path).join(", ")
     );
-
-    const trimmedAttempt = stub
-      .calls()
-      .filter((call) => call.path === "/auth/v1/token" && /grant_type=password/.test(call.query))
-      .pop();
-    ok(
-      "surrounding whitespace is stripped from the password before it is sent",
-      trimmedAttempt && trimmedAttempt.body.password === "creewrld",
-      trimmedAttempt && JSON.stringify(trimmedAttempt.body.password)
-    );
-    ok(
-      "the address is normalised on that same attempt",
-      trimmedAttempt && trimmedAttempt.body.email === "owner@creewrld.test",
-      trimmedAttempt && trimmedAttempt.body.email
-    );
-    ok("no merchant flag is written to localStorage", (await page.evaluate(() => !localStorage.getItem("creewrld.session.v1"))));
+    ok("the flag never reaches localStorage", (await page.evaluate(() => !localStorage.getItem("isAdmin") && !localStorage.getItem("creewrld.session.v1") && !localStorage.getItem("creewrld.auth.v2"))));
     await wait(300);
     ok("edit overlays become visible", (await page.evaluate(() => {
       const node = document.querySelector(".card__admin");
@@ -808,7 +733,8 @@ async function run() {
     await wait(900);
     ok("cart survives a reload (device-local)", (await text(page, "#cartCount")) === "1", await text(page, "#cartCount"));
     ok("delivery zone survives a reload", (await page.evaluate(() => document.querySelector("#cartZone").value)) === "nairobi-outer");
-    ok("merchant session survives a reload", (await page.evaluate(() => document.body.classList.contains("is-admin"))) === true);
+    ok("the studio unlock survives a reload", (await page.evaluate(() => document.body.classList.contains("is-admin"))) === true);
+    ok("because sessionStorage still holds it", (await page.evaluate(() => sessionStorage.getItem("isAdmin"))) === "true");
     ok("catalogue is re-read from the database", (await count(page, ".card")) === 5, String(await count(page, ".card")));
     ok(
       "no products or session keys are left in localStorage",
@@ -818,6 +744,18 @@ async function run() {
     /* ------------------------------------------- resilience & starter catalogue */
     section("Backend resilience");
     const second = await openPage(browser);
+
+    // A second tab starts locked: sessionStorage does not cross tabs. This is
+    // the one behaviour change from a Supabase session, and it is on purpose —
+    // closing the tab is what ends a studio session.
+    ok("a new tab starts locked", (await second.page.evaluate(() => document.body.classList.contains("is-admin"))) === false);
+
+    await click(second.page, "#loginBtn");
+    await wait(250);
+    await fill(second.page, "#lfPass", "creewrld.com");
+    await submit(second.page, "#loginForm");
+    await wait(400);
+    ok("the passphrase unlocks the new tab too", (await second.page.evaluate(() => document.body.classList.contains("is-admin"))) === true);
 
     // Empty table -> the merchant can seed the starter catalogue.
     stub.state.products = [];
@@ -881,13 +819,13 @@ async function run() {
       (await page.evaluate(() => window.getComputedStyle(document.querySelector(".card__admin")).visibility)) !== "visible"
     );
     ok(
-      "sign-out called the auth endpoint",
-      stub.calls().some((call) => call.path === "/auth/v1/logout"),
-      stub.calls().filter((call) => /auth/.test(call.path)).map((call) => call.path).join(", ")
+      "the sessionStorage flag is removed",
+      (await page.evaluate(() => sessionStorage.getItem("isAdmin"))) === null,
+      String(await page.evaluate(() => sessionStorage.getItem("isAdmin")))
     );
     ok(
-      "no session is left in storage",
-      (await page.evaluate(() => !localStorage.getItem("creewrld.auth.v2")))
+      "nothing is left in localStorage either",
+      (await page.evaluate(() => !localStorage.getItem("isAdmin") && !localStorage.getItem("creewrld.auth.v2")))
     );
 
     // Signed out, the header link opens the modal again.

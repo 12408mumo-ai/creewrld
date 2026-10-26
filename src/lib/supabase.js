@@ -34,11 +34,14 @@ export const CONFIG_ERROR =
  */
 export const supabase = supabaseConfig.configured
   ? createClient(supabaseConfig.url, supabaseConfig.anonKey, {
+      // The storefront does not use Supabase Auth any more: the studio is
+      // unlocked with a passphrase in the browser. Leaving session persistence
+      // on would make the client hunt for a refresh token on every boot — and
+      // fire a doomed request for anyone who signed in before this change.
       auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: false,
-        storageKey: "creewrld.auth.v2"
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false
       },
       global: {
         headers: { "x-application-name": "cree-wrld-storefront" }
@@ -46,6 +49,18 @@ export const supabase = supabaseConfig.configured
       realtime: REALTIME_ENABLED ? undefined : { params: { eventsPerSecond: 0 } }
     })
   : null;
+
+/**
+ * Tokens left behind by the Supabase Auth era. The app no longer reads them,
+ * so they are deleted rather than left to sit in the browser.
+ */
+try {
+  if (typeof window !== "undefined" && window.localStorage) {
+    window.localStorage.removeItem("creewrld.auth.v2");
+  }
+} catch (err) {
+  /* storage blocked — nothing to clean */
+}
 
 export function assertConfigured() {
   if (!supabase) {
