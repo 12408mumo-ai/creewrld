@@ -239,7 +239,11 @@ export const app = {
       }
     })(),
     headerLabel: ($("#loginBtnLabel") || {}).textContent || null,
-    merchantBarVisible: $("#merchantBar") ? !$("#merchantBar").hidden : null,
+    studioBarVisible: $("#studioBar") ? !$("#studioBar").hidden : null,
+    drawerOpen: (() => {
+      const drawer = $("#studioDrawer");
+      return drawer ? drawer.classList.contains("is-open") : null;
+    })(),
     cardControls: document.querySelectorAll(".card__admin").length
   })
 };

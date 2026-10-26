@@ -55,6 +55,14 @@ describe("rowToProduct", () => {
     expect(product.condition).toBe("Excellent");
   });
 
+  it("reads the stock column, defaulting old rows to in stock", () => {
+    expect(rowToProduct(dbRow()).inStock).toBe(true);
+    expect(rowToProduct(dbRow({ is_active: true })).inStock).toBe(true);
+    expect(rowToProduct(dbRow({ is_active: false })).inStock).toBe(false);
+    // A row written before the column existed has no value at all.
+    expect(rowToProduct(dbRow({ is_active: undefined })).inStock).toBe(true);
+  });
+
   it("drops unusable rows from a list", () => {
     expect(rowsToProducts([dbRow(), { title: "" }, null])).toHaveLength(1);
     expect(rowsToProducts(null)).toEqual([]);
@@ -79,6 +87,14 @@ describe("productToRow", () => {
     expect(row.price).toBe(12500);
     expect(row.sizes).toEqual(["M", "L"]);
     expect(row.image_url).toBe("https://cdn.example.com/b.jpg");
+  });
+
+  it("writes the stock switch as is_active", () => {
+    const base = { title: "Tee", category: "Sneakers", price: 100, sizes: ["M"] };
+    expect(productToRow({ ...base, inStock: true }, categories).is_active).toBe(true);
+    expect(productToRow({ ...base, inStock: false }, categories).is_active).toBe(false);
+    // An older caller that says nothing keeps the piece on sale.
+    expect(productToRow(base, categories).is_active).toBe(true);
   });
 
   it("rounds a price typed as a decimal", () => {

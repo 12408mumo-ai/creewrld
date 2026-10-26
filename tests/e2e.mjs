@@ -550,14 +550,15 @@ async function run() {
     /* ------------------------------------------------------------------ admin */
     section("Studio access (passphrase)");
     ok("admin overlays are hidden for shoppers", (await page.evaluate(() => window.getComputedStyle(document.querySelector(".card__admin")).visibility)) !== "visible");
-    ok("no add-product control in the shopper header", (await count(page, ".actions #merchantAdd")) === 0);
-    ok("the merchant strip is hidden while locked", (await isVisible(page, "#merchantBar")) === false);
+    ok("no add-product control in the shopper header", (await count(page, "header #studioNew")) === 0);
+    ok("no add-product control in the shopper menu either", (await count(page, "#mobileNav #studioNew")) === 0);
+    ok("the studio bar is hidden while locked", (await isVisible(page, "#studioBar")) === false);
     ok("nothing is stored before the studio is unlocked", (await page.evaluate(() => !sessionStorage.getItem("isAdmin"))));
     ok(
       "the console helper agrees the studio is closed",
       (await page.evaluate(() => {
         const studio = window.creewrldStudio();
-        return studio.isAdmin === false && studio.merchantBarVisible === false && studio.headerLabel === "Login / Admin";
+        return studio.isAdmin === false && studio.studioBarVisible === false && studio.headerLabel === "Login / Admin";
       })) === true,
       await page.evaluate(() => JSON.stringify(window.creewrldStudio()))
     );
@@ -654,12 +655,12 @@ async function run() {
       (await page.evaluate(() => {
         const studio = window.creewrldStudio();
         return studio.isAdmin === true && studio.sessionFlag === "true" &&
-          studio.headerLabel === "Logout" && studio.merchantBarVisible === true;
+          studio.headerLabel === "Logout" && studio.studioBarVisible === true;
       })) === true,
       await page.evaluate(() => JSON.stringify(window.creewrldStudio()))
     );
     ok("the header link becomes LOGOUT", (await text(page, "#loginBtnLabel")) === "Logout", await text(page, "#loginBtnLabel"));
-    ok("merchant strip appears", await isVisible(page, "#merchantBar"));
+    ok("the studio bar appears", await isVisible(page, "#studioBar"));
     ok(
       "no Supabase Auth call was made",
       !stub.calls().some((call) => /^\/auth\/v1\/(token|user|logout)/.test(call.path)),
@@ -672,11 +673,24 @@ async function run() {
       return window.getComputedStyle(node).visibility === "visible";
     })) === true);
 
-    ok("merchant strip exposes the add action", await isVisible(page, "#merchantAdd"));
-    await click(page, "#merchantAdd");
+    ok("the studio bar exposes the add action", await isVisible(page, "#studioNew"));
+    ok("the bar reports the studio is active", /studio active/i.test(await text(page, "#studioBar")));
+    ok("the bar carries a logout action", await isVisible(page, "#studioLogout"));
+    ok("the bar counts the pieces on the grid", /pieces/i.test(await text(page, "#studioCount")), await text(page, "#studioCount"));
+    await click(page, "#studioNew");
     await wait(300);
-    ok("add-product form opens for the merchant", await isVisible(page, "#productModal"));
-    ok("the form offers a file upload", await isVisible(page, "#pfFile"));
+    ok("the studio drawer opens for the merchant", await isVisible(page, "#studioDrawer"));
+    ok("the drawer is titled for a new piece", /New\s+piece/i.test(await text(page, "#studioTitle")), await text(page, "#studioTitle"));
+    ok("the drawer offers a file upload", await isVisible(page, "#pfFile"));
+    ok("the drawer offers a dropzone", await isVisible(page, "#pfDropzone"));
+    ok("the drawer offers a stock toggle", await isVisible(page, "#pfStock"));
+    ok("new pieces start in stock", (await page.evaluate(() => document.querySelector("#pfStock").checked)) === true);
+    ok("the stock toggle reads IN STOCK", /in stock/i.test(await text(page, "#pfStockState")), await text(page, "#pfStockState"));
+    ok("the drawer offers the four DB categories", (await page.evaluate(() =>
+      Array.from(document.querySelectorAll("#pfCategory option")).map((option) => option.value).join(",")
+    )) === "Sneakers,Streetwear,Old Money,Y2K");
+    ok("the publish button is labelled for the grid", /publish to grid/i.test(await text(page, "#productSubmit")), await text(page, "#productSubmit"));
+    ok("cancel/close is offered", /cancel \/ close/i.test(await text(page, "#studioCancel")), await text(page, "#studioCancel"));
 
     await fill(page, "#pfTitle", "Selvedge Trucker");
     await page.select("#pfCategory", "Streetwear");
@@ -684,6 +698,43 @@ async function run() {
     await page.select("#pfCondition", "Like New");
     await fill(page, "#pfSizes", "M, L, XL");
     await fill(page, "#pfDescription", "Indigo selvedge denim trucker with copper rivets.");
+
+    // The stock switch must be a real toggle, and it must go back again.
+    await page.evaluate(() => {
+      const toggle = document.querySelector("#pfStock");
+      toggle.checked = false;
+      toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    ok("the stock label flips to SOLD OUT", /sold out/i.test(await text(page, "#pfStockState")), await text(page, "#pfStockState"));
+    await page.evaluate(() => {
+      const toggle = document.querySelector("#pfStock");
+      toggle.checked = true;
+      toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    ok("the stock label flips back to IN STOCK", /in stock/i.test(await text(page, "#pfStockState")));
+
+    // Drag and drop: a synthetic drop of a real File must preview exactly as a
+    // browse-chosen file does.
+    const dropHandled = await page.evaluate(() => {
+      const zone = document.querySelector("#pfDropzone");
+      const bytes = atob(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+      );
+      const buffer = new Uint8Array(bytes.length);
+      for (let i = 0; i < bytes.length; i += 1) buffer[i] = bytes.charCodeAt(i);
+      const file = new File([buffer], "dropped.png", { type: "image/png" });
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      zone.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: transfer }));
+      const dragging = zone.classList.contains("is-dragging");
+      zone.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }));
+      return { dragging, cleared: !zone.classList.contains("is-dragging") };
+    });
+    ok("dragover marks the dropzone", dropHandled.dragging === true);
+    ok("drop clears the dragging state", dropHandled.cleared === true);
+    await wait(300);
+    ok("a dropped file previews before upload", await isVisible(page, "#pfPreview img"));
+    ok("the dropzone names the dropped file", /dropped\.png/i.test(await text(page, "#pfPreviewMeta")), await text(page, "#pfPreviewMeta"));
 
     const fileInput = await page.$("#pfFile");
     await fileInput.uploadFile(TEST_IMAGE);
@@ -761,9 +812,73 @@ async function run() {
     ok("edit kept the row id", stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.id === inserted.id);
     ok("edit did not duplicate the row", stub.rows().filter((rowDB) => rowDB.title === "Selvedge Trucker").length === 1);
 
-    await click(page, ".card [data-delete]");
+    /* ---- stock status: sold out is persisted as is_active = false */
+    await click(page, ".card [data-edit]");
+    await wait(300);
+    ok("edit pre-fills the stock toggle as in stock", (await page.evaluate(() => document.querySelector("#pfStock").checked)) === true);
+    await page.evaluate(() => {
+      const toggle = document.querySelector("#pfStock");
+      toggle.checked = false;
+      toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await submit(page, "#productForm");
+    await wait(900);
+
+    ok(
+      "sold out is written as is_active false",
+      stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.is_active === false,
+      JSON.stringify(stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.is_active)
+    );
+
+    await click(page, '[data-filter="All Items"]');
+    await wait(250);
+    const soldCard = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll(".card")).find((node) =>
+        /Selvedge Trucker/.test(node.textContent)
+      );
+      if (!card) return null;
+      return {
+        soldOut: card.classList.contains("is-sold-out"),
+        badge: (card.querySelector(".card__badge") || {}).textContent || "",
+        order: (card.querySelector(".card__order") || {}).textContent || "",
+        disabled: Boolean(card.querySelector(".card__order")?.disabled)
+      };
+    });
+    ok("a sold-out piece is marked on the card", soldCard && soldCard.soldOut === true, JSON.stringify(soldCard));
+    ok("the card badge reads SOLD OUT", soldCard && /sold out/i.test(soldCard.badge), soldCard && soldCard.badge);
+    ok("the order button is disabled", soldCard && soldCard.disabled === true && /sold out/i.test(soldCard.order), JSON.stringify(soldCard));
+
+    // Put it back in stock so the delete/refresh path runs from a normal card.
+    await click(page, ".card [data-edit]");
+    await wait(300);
+    await page.evaluate(() => {
+      const toggle = document.querySelector("#pfStock");
+      toggle.checked = true;
+      toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await submit(page, "#productForm");
+    await wait(900);
+    ok(
+      "coming back in stock clears is_active false",
+      stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.is_active === true,
+      JSON.stringify(stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.is_active)
+    );
+
+    /* ---- delete */
+    const deleteTarget = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll(".card")).find((node) =>
+        /Selvedge Trucker/.test(node.textContent)
+      );
+      return card ? card.querySelector("[data-delete]").getAttribute("data-delete") : null;
+    });
+    await page.evaluate((id) => document.querySelector('[data-delete="' + id + '"]').click(), deleteTarget);
     await wait(250);
     ok("delete asks for confirmation", await isVisible(page, "#confirmModal"));
+    ok(
+      "the confirmation asks the exact question",
+      /Delete this piece permanently\?/.test(await text(page, "#confirmTitle")),
+      await text(page, "#confirmTitle")
+    );
     await click(page, "#confirmYes");
     await wait(900);
     ok("piece is removed from the grid", (await count(page, ".card")) === 5, String(await count(page, ".card")));
@@ -818,9 +933,9 @@ async function run() {
     await second.page.reload({ waitUntil: "networkidle0" });
     await wait(900);
     ok("an empty table shows the empty state", await isVisible(second.page, "#emptyState"));
-    ok("the starter-catalogue control appears for the merchant", await isVisible(second.page, "#merchantSeed"));
+    ok("the starter-catalogue control appears for the merchant", await isVisible(second.page, "#studioSeed"));
 
-    await click(second.page, "#merchantSeed");
+    await click(second.page, "#studioSeed");
     await wait(300);
     await click(second.page, "#confirmYes");
     await wait(1500);
@@ -831,7 +946,7 @@ async function run() {
 
     // A write rejected by RLS must surface, not silently "succeed".
     stub.state.failNextWrite = 'new row violates row-level security policy for table "products"';
-    await click(second.page, "#merchantAdd");
+    await click(second.page, "#studioNew");
     await wait(300);
     await fill(second.page, "#pfTitle", "Blocked Piece");
     await fill(second.page, "#pfPrice", "1200");
@@ -840,7 +955,7 @@ async function run() {
     await fill(second.page, "#pfDescription", "Should never be inserted.");
     await submit(second.page, "#productForm");
     await wait(900);
-    ok("a rejected write keeps the form open", await isVisible(second.page, "#productModal"));
+    ok("a rejected write keeps the drawer open", await isVisible(second.page, "#studioDrawer"));
     ok("a rejected write shows a readable error", await isVisible(second.page, ".toast"));
     const blockToast = await second.page.evaluate(() =>
       Array.from(document.querySelectorAll(".toast")).map((node) => node.textContent.trim()).join(" | ")
@@ -853,7 +968,7 @@ async function run() {
       blockToast
     );
     ok("nothing was inserted", stub.rows().length === 10, String(stub.rows().length));
-    await click(second.page, "#productModal [data-close]");
+    await click(second.page, "#studioDrawer [data-close]");
     await wait(300);
 
     // Unreachable backend: the storefront explains itself instead of looking empty.
@@ -879,7 +994,7 @@ async function run() {
     ok("LOGOUT ends the session", (await page.evaluate(() => document.body.classList.contains("is-admin"))) === false);
     ok("the header link reverts to LOGIN / ADMIN", (await text(page, "#loginBtnLabel")) === "Login / Admin", await text(page, "#loginBtnLabel"));
     ok("the mobile menu reverts too", (await text(page, "#mobileLogin")) === "Login / Admin", await text(page, "#mobileLogin"));
-    ok("the merchant strip disappears", (await isVisible(page, "#merchantBar")) === false);
+    ok("the studio bar disappears", (await isVisible(page, "#studioBar")) === false);
     ok(
       "card controls are hidden from the public again",
       (await page.evaluate(() => window.getComputedStyle(document.querySelector(".card__admin")).visibility)) !== "visible"
@@ -1052,6 +1167,21 @@ async function run() {
     ok("login modal has no axe violations", loginViolations.length === 0, JSON.stringify(loginViolations));
     await page.keyboard.press("Escape");
     await wait(300);
+
+    // The studio bar and drawer are a second surface entirely; axe checks them too.
+    await page.evaluate(() => sessionStorage.setItem("isAdmin", "true"));
+    await page.reload({ waitUntil: "networkidle0" });
+    await wait(700);
+    const barViolations = await axeViolations(page);
+    ok("the studio bar has no axe violations", barViolations.length === 0, JSON.stringify(barViolations));
+
+    await click(page, "#studioNew");
+    await wait(600);
+    const drawerViolations = await axeViolations(page);
+    ok("the studio drawer has no axe violations", drawerViolations.length === 0, JSON.stringify(drawerViolations));
+    await page.keyboard.press("Escape");
+    await wait(300);
+    await page.evaluate(() => sessionStorage.removeItem("isAdmin"));
 
     /* ---------------------------------------------------------- responsive */
     section("Responsive layout (320px \u2192 1920px)");
