@@ -14,16 +14,22 @@ import {
   categoryTabs,
   deleteProduct,
   getProduct,
-  saveProduct,
   lockStudioSession,
+  refreshCatalogue,
+  saveProduct,
   seedStarterCatalogue,
   state,
+  syncStudioFromStorage,
   unlockStudioWith
 } from "../store.js";
 import { selectCategory } from "./grid.js";
 import { closeLayer, openLayer, toast } from "./layers.js";
 import { uploadProductImage, validateImage } from "../data/storage.js";
 import { describeError } from "../lib/supabase.js";
+
+/** Shown when the database refuses a write — almost always a missing policy. */
+const PUBLISH_BLOCKED =
+  "Failed to publish piece to database. Ensure database RLS policies permit public inserts.";
 
 const loginModal = () => $("#loginModal");
 const productModal = () => $("#productModal");
@@ -36,39 +42,61 @@ let filePreviewUrl = null;
 
 /* -------------------------------------------------------------------- chrome */
 
-export function applyAdminChrome() {
-  document.body.classList.toggle("is-admin", state.admin);
+/**
+ * The single switch for every merchant surface.
+ *
+ * It reads `sessionStorage.isAdmin` rather than trusting a flag in memory, so
+ * the DOM can never disagree with what the tab actually unlocked: a reload, a
+ * logout, or a value cleared in another script all resolve the same way. It is
+ * safe to call at any time — on boot, after the passphrase, after a logout,
+ * and after every grid render — because `syncStudioFromStorage` only emits
+ * when the value really changed.
+ */
+export function applyAdminState() {
+  const isAdmin = syncStudioFromStorage();
 
+  // Card overlays and the quick-view admin row are styled from this class.
+  document.body.classList.toggle("is-admin", isAdmin);
+
+  // The merchant strip carries "+ New product" — the add-product entry point.
   const bar = $("#merchantBar");
-  if (bar) bar.hidden = !state.admin;
+  if (bar) bar.hidden = !isAdmin;
 
-  // Signed in, the header link becomes the way out. Out, it opens the modal.
+  // Unlocked, the header action is the way out; locked, it opens the modal.
   const label = $("#loginBtnLabel");
-  if (label) label.textContent = state.admin ? "Logout" : "Login / Admin";
+  if (label) label.textContent = isAdmin ? "Logout" : "Login / Admin";
 
   const mobileLabel = $("#mobileLogin");
-  if (mobileLabel) mobileLabel.textContent = state.admin ? "Logout" : "Login / Admin";
+  if (mobileLabel) mobileLabel.textContent = isAdmin ? "Logout" : "Login / Admin";
 
   const loginBtn = $("#loginBtn");
   if (loginBtn) {
     loginBtn.setAttribute(
       "aria-label",
-      state.admin ? "Log out of studio mode" : "Login / Admin"
+      isAdmin ? "Log out of studio mode" : "Login / Admin"
     );
   }
 
-  // A session that arrives while the modal is open (another tab, a restored
-  // session, a refreshed token) means the form has nothing left to ask for.
-  if (state.admin) closeLayer(loginModal());
+  // Belt and braces: the CSS above already hides these, but a card rendered
+  // while unlocked must not leave an invisible-but-focusable button behind.
+  $$(".card__admin").forEach((node) => {
+    node.setAttribute("aria-hidden", isAdmin ? "false" : "true");
+  });
 
   $$(".qv__admin").forEach((node) => {
-    node.hidden = !state.admin;
+    node.hidden = !isAdmin;
   });
 
   // The starter catalogue is only offered while there is nothing to overwrite.
   const seed = $("#merchantSeed");
-  if (seed) seed.hidden = !(state.admin && !state.loading && state.products.length === 0);
+  if (seed) seed.hidden = !(isAdmin && !state.loading && state.products.length === 0);
+
+  // Unlocking closes the prompt; any other state leaves it alone.
+  if (isAdmin) closeLayer(loginModal());
+
+  return isAdmin;
 }
+
 
 /* --------------------------------------------------------------------- login */
 
@@ -300,22 +328,40 @@ async function handleProductSubmit(event) {
       description
     });
 
-    toast((id ? "Saved — " : "Published — ") + saved.title);
+    // The piece is in the database: get the drawer out of the way first, then
+    // re-hydrate the grid from what the server actually holds.
     closeLayer(productModal());
     clearFilePreview();
     selectedFile = null;
+    toast((id ? "Saved — " : "Published — ") + saved.title);
+
+    try {
+      await refreshCatalogue();
+    } catch (refreshError) {
+      // The write landed; only the follow-up read failed. The optimistic row
+      // is already on the grid, so say so quietly instead of implying loss.
+      toast("Saved, but the grid couldn't refresh. Reload to see it.", "warn");
+    }
 
     // Show the merchant exactly where the piece landed.
     if (!id) {
+      const landed = getProduct(saved.id) || saved;
       window.setTimeout(() => {
-        selectCategory(saved.category, { focus: false, scroll: true });
+        selectCategory(landed.category, { focus: false, scroll: true });
       }, 180);
     }
   } catch (error) {
     const message = describeError(error, "Couldn't save that piece.");
-    // Surface image problems against the image field; anything else is a toast.
-    if (/image|upload/i.test(message)) productError("image", message);
-    toast(message, "warn");
+    // Image problems belong against the image field; a refused write is a
+    // database permissions problem and says so, in the terms that fix it.
+    if (/image|upload/i.test(message)) {
+      productError("image", message);
+      toast(message, "warn");
+    } else if (/row.?level security|policy|permission|not allowed|42501/i.test(message)) {
+      toast(PUBLISH_BLOCKED, "warn");
+    } else {
+      toast(message, "warn");
+    }
   } finally {
     setProductBusy(false, id ? "Save changes" : "Publish piece");
   }

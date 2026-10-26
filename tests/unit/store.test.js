@@ -251,6 +251,53 @@ describe("studio lock", () => {
   });
 });
 
+describe("studio state from storage", () => {
+  it("adopts the flag written by another part of the page", async () => {
+    const store = await freshStore();
+    expect(store.state.admin).toBe(false);
+
+    session.setItem("isAdmin", "true");
+    expect(store.syncStudioFromStorage()).toBe(true);
+    expect(store.state.admin).toBe(true);
+  });
+
+  it("drops admin when the flag is removed, e.g. a logout elsewhere", async () => {
+    const store = await freshStore();
+    store.unlockStudioWith("creewrld.com");
+    expect(store.state.admin).toBe(true);
+
+    session.removeItem("isAdmin");
+    expect(store.syncStudioFromStorage()).toBe(false);
+    expect(store.state.admin).toBe(false);
+  });
+
+  it("does not undo a live unlock when storage cannot be read", async () => {
+    const store = await freshStore();
+    store.unlockStudioWith("creewrld.com");
+    expect(store.state.admin).toBe(true);
+
+    // A browser that blocks sessionStorage must not look like a logout.
+    const { setStudioStorage } = await import("../../src/data/studio.js");
+    setStudioStorage({
+      getItem() {
+        throw new Error("blocked");
+      },
+      setItem() {
+        throw new Error("blocked");
+      },
+      removeItem() {
+        throw new Error("blocked")
+      }
+    });
+
+    expect(store.syncStudioFromStorage()).toBe(true);
+    expect(store.state.admin).toBe(true);
+
+    const studioLib = await import("../../src/data/studio.js");
+    studioLib.setStudioStorage(session);
+  });
+});
+
 describe("merchant writes", () => {
   it("adds a saved piece to the front of the catalogue", async () => {
     const store = await freshStore();

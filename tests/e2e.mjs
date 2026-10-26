@@ -553,6 +553,14 @@ async function run() {
     ok("no add-product control in the shopper header", (await count(page, ".actions #merchantAdd")) === 0);
     ok("the merchant strip is hidden while locked", (await isVisible(page, "#merchantBar")) === false);
     ok("nothing is stored before the studio is unlocked", (await page.evaluate(() => !sessionStorage.getItem("isAdmin"))));
+    ok(
+      "the console helper agrees the studio is closed",
+      (await page.evaluate(() => {
+        const studio = window.creewrldStudio();
+        return studio.isAdmin === false && studio.merchantBarVisible === false && studio.headerLabel === "Login / Admin";
+      })) === true,
+      await page.evaluate(() => JSON.stringify(window.creewrldStudio()))
+    );
 
     await click(page, "#loginBtn");
     await wait(250);
@@ -641,6 +649,15 @@ async function run() {
     await until(async () => (await isVisible(page, "#loginModal")) === false, 4000);
     ok("the modal closes itself", (await isVisible(page, "#loginModal")) === false);
     ok("the unlock is stored in sessionStorage", (await page.evaluate(() => sessionStorage.getItem("isAdmin"))) === "true");
+    ok(
+      "the console helper agrees the studio is open",
+      (await page.evaluate(() => {
+        const studio = window.creewrldStudio();
+        return studio.isAdmin === true && studio.sessionFlag === "true" &&
+          studio.headerLabel === "Logout" && studio.merchantBarVisible === true;
+      })) === true,
+      await page.evaluate(() => JSON.stringify(window.creewrldStudio()))
+    );
     ok("the header link becomes LOGOUT", (await text(page, "#loginBtnLabel")) === "Logout", await text(page, "#loginBtnLabel"));
     ok("merchant strip appears", await isVisible(page, "#merchantBar"));
     ok(
@@ -689,6 +706,23 @@ async function run() {
 
     const inserted = stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker");
     ok("piece inserted into the products table", Boolean(inserted));
+
+    // The grid is re-hydrated from Supabase after the write, not just patched
+    // with the response — the later GET is the proof.
+    const calls = stub.calls();
+    const insertAt = calls.findIndex((call) => call.method === "POST" && call.path === "/rest/v1/products");
+    const refetchAt = calls.findIndex((call, index) => index > insertAt && call.method === "GET" && call.path === "/rest/v1/products");
+    ok(
+      "the catalogue is re-read after publishing",
+      insertAt !== -1 && refetchAt > insertAt,
+      "insert@" + insertAt + " refetch@" + refetchAt
+    );
+    ok(
+      "the re-read asks for the category join, newest first",
+      /categories\(name,slug\)|categories%28name%2Cslug%29/.test(calls[refetchAt] ? calls[refetchAt].query : "") &&
+        /order=created_at\.desc/.test(calls[refetchAt] ? calls[refetchAt].query : ""),
+      calls[refetchAt] && calls[refetchAt].query
+    );
     ok(
       "stored image_url is the Supabase public URL",
       inserted && /^https:\/\/stub\.supabase\.co\/storage\/v1\/object\/public\/product-images\/selvedge-trucker-[a-z0-9]+\.png$/.test(inserted.image_url),
@@ -808,6 +842,16 @@ async function run() {
     await wait(900);
     ok("a rejected write keeps the form open", await isVisible(second.page, "#productModal"));
     ok("a rejected write shows a readable error", await isVisible(second.page, ".toast"));
+    const blockToast = await second.page.evaluate(() =>
+      Array.from(document.querySelectorAll(".toast")).map((node) => node.textContent.trim()).join(" | ")
+    );
+    ok(
+      "the RLS refusal is spelled out",
+      blockToast.includes(
+        "Failed to publish piece to database. Ensure database RLS policies permit public inserts."
+      ),
+      blockToast
+    );
     ok("nothing was inserted", stub.rows().length === 10, String(stub.rows().length));
     await click(second.page, "#productModal [data-close]");
     await wait(300);
