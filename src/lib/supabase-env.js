@@ -118,6 +118,24 @@ export function normalizeKey(value) {
   return text;
 }
 
+/**
+ * The project ref a Supabase URL belongs to — the `xyz` in
+ * `https://xyz.supabase.co`. Two projects are told apart by this string and
+ * nothing else, so it is the one fact worth printing when a deployment turns
+ * out to be talking to the wrong database.
+ */
+export function projectRefOf(url) {
+  const text = normalizeUrl(url);
+  if (!text) return "";
+  try {
+    const host = text.replace(/^https?:\/\//i, "").split("/")[0];
+    const [first] = host.split(".");
+    return first || "";
+  } catch (err) {
+    return "";
+  }
+}
+
 /** Only the first few characters — never log a whole key. */
 export function keyPreview(key) {
   const text = cleanValue(key);
