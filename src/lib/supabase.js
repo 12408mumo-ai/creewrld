@@ -31,6 +31,7 @@ import {
   keyPreview,
   pickKey,
   pickUrl,
+  projectRefOf,
   resolveSupabaseConfig
 } from "./supabase-env.js";
 
@@ -72,6 +73,8 @@ export const supabaseConfig = {
   source: resolved.source,
   /** A short, safe fingerprint of the key, for the diagnostics table. */
   keyPreview: keyPreview(resolved.anonKey),
+  /** Which Supabase project this build talks to — `xyz` in `xyz.supabase.co`. */
+  projectRef: projectRefOf(resolved.url),
   /** Why any earlier source was rejected, e.g. "build define: key is missing". */
   issues: resolved.issues
 };
@@ -124,6 +127,7 @@ if (typeof console !== "undefined") {
     console.info(
       "[creewrld] Supabase client ready — " +
         supabaseConfig.url +
+        " (project " + supabaseConfig.projectRef + ")" +
         " · key " +
         supabaseConfig.keyPreview +
         " (from " +
@@ -193,14 +197,25 @@ export function describeError(error, fallback = "Something went wrong. Please tr
   }
 
   // Postgres / PostgREST vocabulary leaked to the storefront.
-  if (/relation .* does not exist|schema cache/i.test(message)) {
-    return "The database tables are missing — run supabase/schema.sql in the SQL editor.";
+  // A 404 from PostgREST means "this project has no such table in its schema
+  // cache" — almost always the wrong project, or a schema that was never run.
+  // Naming the project is what turns that into a one-minute fix.
+  if (/relation .* does not exist|schema cache|could not find the table/i.test(message)) {
+    return (
+      "The tables are missing from this Supabase project (" +
+      (supabaseConfig.projectRef || "unknown project") +
+      "). Run supabase/schema.sql there — or check that the deployment points at the right project."
+    );
   }
   if (/row-level security|row level security/i.test(message)) {
     return "This account is not allowed to change the catalogue. Check the RLS policies.";
   }
-  if (/bucket not found/i.test(message)) {
-    return "The product-images storage bucket is missing — run supabase/schema.sql first.";
+  if (/bucket not found|bucket not exist/i.test(message)) {
+    return (
+      "The product-images storage bucket is missing from this Supabase project (" +
+      (supabaseConfig.projectRef || "unknown project") +
+      "). Run supabase/schema.sql there first."
+    );
   }
   if (/payload too large|exceeded the maximum allowed size/i.test(message)) {
     return "That image is too large. Use a file under 6 MB.";

@@ -87,7 +87,8 @@ function supabaseEnv(mode) {
 function reportSupabase(credentials) {
   if (credentials.configured) {
     const preview = credentials.anonKey.slice(0, 12) + "…";
-    console.log("\n  Supabase   " + credentials.url + " · key " + preview + "\n");
+    const ref = credentials.url.replace(/^https?:\/\//i, "").split(".")[0];
+    console.log("\n  Supabase   " + credentials.url + " · project " + ref + " · key " + preview + "\n");
     return;
   }
 

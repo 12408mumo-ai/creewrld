@@ -30,6 +30,7 @@ if (typeof window !== "undefined") {
    */
   window.creewrldConfig = () => ({
     url: supabaseConfig.url || null,
+    projectRef: supabaseConfig.projectRef || null,
     configured: supabaseConfig.configured,
     source: supabaseConfig.source || null,
     keyPreview: supabaseConfig.keyPreview || null,

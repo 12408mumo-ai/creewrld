@@ -9,6 +9,7 @@ import {
   normalizeKey,
   normalizeUrl,
   pickKey,
+  projectRefOf,
   pickUrl,
   resolveSupabaseConfig
 } from "../../src/lib/supabase-env.js";
@@ -72,6 +73,25 @@ describe("normalizeKey", () => {
     // Deliberately no long minimum: the test harness's key is "stub-anon-key",
     // and it has to pass the same gate the production key does.
     expect(normalizeKey("stub-anon-key")).toBe("stub-anon-key");
+  });
+});
+
+describe("projectRefOf", () => {
+  it("pulls the project ref out of a project URL", () => {
+    expect(projectRefOf("https://vagnxflwjldokhqvyrqg.supabase.co")).toBe("vagnxflwjldokhqvyrqg");
+    expect(projectRefOf("https://vagnxflwjldokhqvyrqg.supabase.co/")).toBe("vagnxflwjldokhqvyrqg");
+    expect(projectRefOf("https://kvhdzswefdyaqtcbhxvo.supabase.co")).toBe("kvhdzswefdyaqtcbhxvo");
+  });
+
+  it("is empty for anything that is not a project URL", () => {
+    expect(projectRefOf("")).toBe("");
+    expect(projectRefOf(null)).toBe("");
+    expect(projectRefOf("not-a-url")).toBe("");
+  });
+
+  it("tells two projects apart", () => {
+    // The whole point: a deployment on the wrong project must be obvious.
+    expect(projectRefOf("https://a.supabase.co")).not.toBe(projectRefOf("https://b.supabase.co"));
   });
 });
 
