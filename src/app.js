@@ -1,28 +1,14 @@
 /**
  * CREE WRLD — application bootstrap.
  * Wires the modules together; every view is a render of `state`.
- * The catalogue and the merchant session come from Supabase (see store.js).
+ * The catalogue is read from Supabase (see store.js) and managed in the
+ * Supabase Dashboard, so the storefront itself is strictly read-only.
  */
 
 import { $ } from "./lib/format.js";
 import { PLACEHOLDER } from "./lib/images.js";
 import { CONFIG_ERROR } from "./lib/supabase.js";
-import {
-  addToCart,
-  initStore,
-  loadCatalogue,
-  restoreStudio,
-  state,
-  subscribe,
-  watchCatalogue
-} from "./store.js";
-import {
-  applyAdminState,
-  bindAdmin,
-  confirmDelete,
-  openProductForm,
-  requireAdmin
-} from "./ui/admin.js";
+import { addToCart, initStore, loadCatalogue, state, subscribe, watchCatalogue } from "./store.js";
 import { bindCart, bumpCartBadge, closeCart, openCart, renderCart } from "./ui/cart.js";
 import { bindGrid, renderFilters, renderGrid, selectCategory } from "./ui/grid.js";
 import { initHeader, updateTopOffset } from "./ui/header.js";
@@ -43,7 +29,6 @@ function renderAll() {
   renderFilters();
   renderGrid();
   renderCart();
-  applyAdminState();
   updateTopOffset();
   renderStatus();
 }
@@ -86,19 +71,11 @@ function wireStateToViews() {
       renderGrid();
       renderCart();
       refreshQuickView();
-      applyAdminState();
       renderStatus();
       updateTopOffset();
     }
 
     if (topic === "cart") renderCart();
-
-    if (topic === "session") {
-      applyAdminState();
-      refreshQuickView();
-      renderStatus();
-      updateTopOffset();
-    }
 
     if (topic === "zone") {
       renderCart();
@@ -124,9 +101,7 @@ function bindGlobalEvents() {
 
   bindGrid({
     onOrder: (id) => orderFromProduct(id),
-    onQuick: (id) => openQuickView(id),
-    onEdit: (product) => requireAdmin(() => openProductForm(product)),
-    onDelete: (product) => requireAdmin(() => confirmDelete(product))
+    onQuick: (id) => openQuickView(id)
   });
 
   bindQuickView({
@@ -137,19 +112,10 @@ function bindGlobalEvents() {
       closeQuickView();
       openCart();
       toast("Added to cart");
-    },
-    onEdit: (product) => {
-      closeQuickView();
-      openProductForm(product);
-    },
-    onDelete: (product) => {
-      closeQuickView();
-      confirmDelete(product);
     }
   });
 
   bindOrder();
-  bindAdmin();
   bindDismissibles();
   installLayerKeyboard();
 
@@ -194,11 +160,6 @@ export async function boot() {
   initStore();
   wireStateToViews();
 
-  // Read the studio lock before the first paint, so a reload never flashes the
-  // shopper chrome over a merchant's controls (or the other way round).
-  restoreStudio();
-  applyAdminState();
-
   initHeader();
   renderAll();
   initHero();
@@ -212,10 +173,6 @@ export async function boot() {
   const category = params.get("category");
   if (category) selectCategory(category, { focus: false, scroll: true });
 
-  // Re-assert once the catalogue is in: the merchant strip's "Load starter
-  // catalogue" button depends on what came back.
-  applyAdminState();
-
   await loadCatalogue();
 
   watchCatalogue();
@@ -227,23 +184,5 @@ export async function boot() {
 export const app = {
   state,
   boot,
-  loadCatalogue,
-  /** What the studio lock thinks right now, for debugging a stuck header. */
-  studioState: () => ({
-    isAdmin: state.admin,
-    sessionFlag: (() => {
-      try {
-        return window.sessionStorage.getItem("isAdmin");
-      } catch (err) {
-        return "(storage blocked)";
-      }
-    })(),
-    headerLabel: ($("#loginBtnLabel") || {}).textContent || null,
-    studioBarVisible: $("#studioBar") ? !$("#studioBar").hidden : null,
-    drawerOpen: (() => {
-      const drawer = $("#studioDrawer");
-      return drawer ? drawer.classList.contains("is-open") : null;
-    })(),
-    cardControls: document.querySelectorAll(".card__admin").length
-  })
+  loadCatalogue
 };

@@ -5,15 +5,15 @@
  *   PUPPETEER_EXECUTABLE_PATH=/path/to/chrome node tests/e2e.mjs
  *
  * Covers: asset integrity (hashed URLs, preloads, no 404s), storefront render,
- * filters, the WhatsApp order payload, the delivery calculator, merchant CRUD,
- * persistence + legacy data migration, axe-core accessibility and layout
- * overflow from 320px to 1920px.
+ * filters, the WhatsApp order payload, the delivery calculator, the read-only
+ * storefront (no merchant chrome, an in-stock-only grid query), persistence,
+ * backend resilience, axe-core accessibility and layout overflow from 320px to
+ * 1920px.
  */
 
 import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import puppeteer from "puppeteer-core";
@@ -30,16 +30,6 @@ const BASE = `http://127.0.0.1:${PORT}/`;
  * and every request it makes is answered by tests/supabase-stub.mjs.
  */
 const stub = createSupabaseStub();
-
-/** A real PNG on disk, so the file input exercises the actual upload path. */
-const TEST_IMAGE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "creewrld-")), "trucker.png");
-fs.writeFileSync(
-  TEST_IMAGE,
-  Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==",
-    "base64"
-  )
-);
 
 let checks = 0;
 let failures = 0;
@@ -561,352 +551,93 @@ async function run() {
     await click(page, "#orderDone");
     await wait(200);
 
-    /* ------------------------------------------------------------------ admin */
-    section("Studio access (passphrase)");
-    ok("admin overlays are hidden for shoppers", (await page.evaluate(() => window.getComputedStyle(document.querySelector(".card__admin")).visibility)) !== "visible");
-    ok("no add-product control in the shopper header", (await count(page, "header #studioNew")) === 0);
-    ok("no add-product control in the shopper menu either", (await count(page, "#mobileNav #studioNew")) === 0);
-    ok("the studio bar is hidden while locked", (await isVisible(page, "#studioBar")) === false);
-    ok("nothing is stored before the studio is unlocked", (await page.evaluate(() => !sessionStorage.getItem("isAdmin"))));
-    ok(
-      "the console helper agrees the studio is closed",
-      (await page.evaluate(() => {
-        const studio = window.creewrldStudio();
-        return studio.isAdmin === false && studio.studioBarVisible === false && studio.headerLabel === "Login / Admin";
-      })) === true,
-      await page.evaluate(() => JSON.stringify(window.creewrldStudio()))
-    );
+    /* ------------------------------------------------------ read-only shop */
+    section("Read-only storefront");
 
-    await click(page, "#loginBtn");
-    await wait(250);
-    ok("login modal opens", await isVisible(page, "#loginModal"));
-    ok("there is no email field any more", (await count(page, "#lfEmail")) === 0);
-    ok("no email input of any kind", (await count(page, '#loginModal input[type="email"]')) === 0);
-    ok(
-      "no placeholder mentions an address",
-      !(await page.evaluate(() =>
-        Array.from(document.querySelectorAll("#loginModal input")).some((node) =>
-          /@|gmail|email/i.test(node.placeholder || "")
-        )
-      ))
-    );
-    ok("the modal asks for a password only", (await count(page, "#loginModal input[type=password]")) === 1);
-    ok("that is the only input in the form", (await count(page, "#loginForm input")) === 1);
-    ok("the title reads Studio Access", (await text(page, "#loginTitle")) === "Studio Access", await text(page, "#loginTitle"));
-    ok(
-      "the password placeholder is the dot mask",
-      (await page.evaluate(() => document.querySelector("#lfPass").placeholder)) === "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022",
-      await page.evaluate(() => document.querySelector("#lfPass").placeholder)
-    );
-    ok(
-      "the button reads ENTER STUDIO",
-      (await text(page, "#loginSubmit")).toLowerCase() === "enter studio" &&
-        (await page.evaluate(() => window.getComputedStyle(document.querySelector("#loginSubmit")).textTransform)) === "uppercase",
-      await text(page, "#loginSubmit")
-    );
-    ok(
-      "the helper text explains the passphrase",
-      (await text(page, "#loginModal .modal__sub")) ===
-        "Enter the studio passphrase to access merchant controls and manage inventory.",
-      await text(page, "#loginModal .modal__sub")
-    );
-    ok(
-      "the passphrase field cannot be auto-capitalised",
-      (await page.evaluate(() => {
-        const node = document.querySelector("#lfPass");
-        return node.getAttribute("autocapitalize") === "none" && node.getAttribute("autocorrect") === "off";
-      })) === true
-    );
-    ok("desktop autofill is off for a shared passphrase", (await page.evaluate(() => document.querySelector("#lfPass").autocomplete)) === "off");
-
-    // Wrong passphrase: refused locally, in red, without touching the network.
-    const callsBefore = stub.calls().length;
-    await fill(page, "#lfPass", "creewrld");
-    await submit(page, "#loginForm");
-    await wait(300);
-    ok("a wrong passphrase is refused", await isVisible(page, "#loginError"));
-    ok(
-      "the refusal is the requested sentence",
-      (await text(page, "#loginError")) === "Incorrect studio passphrase. Please try again.",
-      await text(page, "#loginError")
-    );
-    ok(
-      "the message is red",
-      (await page.evaluate(() => window.getComputedStyle(document.querySelector("#loginError")).color)) === "rgb(226, 131, 123)",
-      await page.evaluate(() => window.getComputedStyle(document.querySelector("#loginError")).color)
-    );
-    ok("the field is emptied for the next attempt", (await page.evaluate(() => document.querySelector("#lfPass").value)) === "");
-    ok(
-      "the studio stays locked",
-      (await page.evaluate(() => document.body.classList.contains("is-admin"))) === false
-    );
-    ok("nothing was sent to the backend", stub.calls().length === callsBefore, String(stub.calls().length - callsBefore));
-    ok("no passphrase is remembered after a refusal", (await page.evaluate(() => !sessionStorage.getItem("isAdmin"))));
-
-    // Retyping clears the message without another submit.
-    await page.evaluate(() => {
-      const pass = document.querySelector("#lfPass");
-      pass.value = "c";
-      pass.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    ok("typing clears the refusal", (await isVisible(page, "#loginError")) === false);
-
-    // The real passphrase, typed with spaces and odd case.
-    await page.evaluate(() => {
-      const pass = document.querySelector("#lfPass");
-      pass.value = "  CreeWrld.COM  ";
-      pass.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await submit(page, "#loginForm");
-    await wait(400);
-    ok("the correct passphrase unlocks the studio", (await page.evaluate(() => document.body.classList.contains("is-admin"))) === true);
-    // The panel fades before `visibility` flips, so poll rather than race it.
-    await until(async () => (await isVisible(page, "#loginModal")) === false, 4000);
-    ok("the modal closes itself", (await isVisible(page, "#loginModal")) === false);
-    ok("the unlock is stored in sessionStorage", (await page.evaluate(() => sessionStorage.getItem("isAdmin"))) === "true");
-    ok(
-      "the console helper agrees the studio is open",
-      (await page.evaluate(() => {
-        const studio = window.creewrldStudio();
-        return studio.isAdmin === true && studio.sessionFlag === "true" &&
-          studio.headerLabel === "Logout" && studio.studioBarVisible === true;
-      })) === true,
-      await page.evaluate(() => JSON.stringify(window.creewrldStudio()))
-    );
-    ok("the header link becomes LOGOUT", (await text(page, "#loginBtnLabel")) === "Logout", await text(page, "#loginBtnLabel"));
-    ok("the studio bar appears", await isVisible(page, "#studioBar"));
-    ok(
-      "no Supabase Auth call was made",
-      !stub.calls().some((call) => /^\/auth\/v1\/(token|user|logout)/.test(call.path)),
-      stub.calls().filter((call) => /auth/.test(call.path)).map((call) => call.path).join(", ")
-    );
-    ok("the flag never reaches localStorage", (await page.evaluate(() => !localStorage.getItem("isAdmin") && !localStorage.getItem("creewrld.session.v1") && !localStorage.getItem("creewrld.auth.v2"))));
-    await wait(300);
-    ok("edit overlays become visible", (await page.evaluate(() => {
-      const node = document.querySelector(".card__admin");
-      return window.getComputedStyle(node).visibility === "visible";
-    })) === true);
-
-    ok("the studio bar exposes the add action", await isVisible(page, "#studioNew"));
-    ok("the bar reports the studio is active", /studio active/i.test(await text(page, "#studioBar")));
-    ok("the bar carries a logout action", await isVisible(page, "#studioLogout"));
-    ok("the bar counts the pieces on the grid", /pieces/i.test(await text(page, "#studioCount")), await text(page, "#studioCount"));
-    await click(page, "#studioNew");
-    await wait(300);
-    ok("the studio drawer opens for the merchant", await isVisible(page, "#studioDrawer"));
-    ok("the drawer is titled for a new piece", /New\s+piece/i.test(await text(page, "#studioTitle")), await text(page, "#studioTitle"));
-    ok("the drawer offers a file upload", await isVisible(page, "#pfFile"));
-    ok("the drawer offers a dropzone", await isVisible(page, "#pfDropzone"));
-    ok("the drawer offers a stock toggle", await isVisible(page, "#pfStock"));
-    ok("new pieces start in stock", (await page.evaluate(() => document.querySelector("#pfStock").checked)) === true);
-    ok("the stock toggle reads IN STOCK", /in stock/i.test(await text(page, "#pfStockState")), await text(page, "#pfStockState"));
-    ok("the drawer offers the four DB categories", (await page.evaluate(() =>
-      Array.from(document.querySelectorAll("#pfCategory option")).map((option) => option.value).join(",")
-    )) === "Sneakers,Streetwear,Old Money,Y2K");
-    ok("the publish button is labelled for the grid", /publish to grid/i.test(await text(page, "#productSubmit")), await text(page, "#productSubmit"));
-    ok("cancel/close is offered", /cancel \/ close/i.test(await text(page, "#studioCancel")), await text(page, "#studioCancel"));
-
-    await fill(page, "#pfTitle", "Selvedge Trucker");
-    await page.select("#pfCategory", "Streetwear");
-    await fill(page, "#pfPrice", "5400");
-    await page.select("#pfCondition", "Like New");
-    await fill(page, "#pfSizes", "M, L, XL");
-    await fill(page, "#pfDescription", "Indigo selvedge denim trucker with copper rivets.");
-
-    // The stock switch must be a real toggle, and it must go back again.
-    await page.evaluate(() => {
-      const toggle = document.querySelector("#pfStock");
-      toggle.checked = false;
-      toggle.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    ok("the stock label flips to SOLD OUT", /sold out/i.test(await text(page, "#pfStockState")), await text(page, "#pfStockState"));
-    await page.evaluate(() => {
-      const toggle = document.querySelector("#pfStock");
-      toggle.checked = true;
-      toggle.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    ok("the stock label flips back to IN STOCK", /in stock/i.test(await text(page, "#pfStockState")));
-
-    // Drag and drop: a synthetic drop of a real File must preview exactly as a
-    // browse-chosen file does.
-    const dropHandled = await page.evaluate(() => {
-      const zone = document.querySelector("#pfDropzone");
-      const bytes = atob(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-      );
-      const buffer = new Uint8Array(bytes.length);
-      for (let i = 0; i < bytes.length; i += 1) buffer[i] = bytes.charCodeAt(i);
-      const file = new File([buffer], "dropped.png", { type: "image/png" });
-      const transfer = new DataTransfer();
-      transfer.items.add(file);
-      zone.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: transfer }));
-      const dragging = zone.classList.contains("is-dragging");
-      zone.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }));
-      return { dragging, cleared: !zone.classList.contains("is-dragging") };
-    });
-    ok("dragover marks the dropzone", dropHandled.dragging === true);
-    ok("drop clears the dragging state", dropHandled.cleared === true);
-    await wait(300);
-    ok("a dropped file previews before upload", await isVisible(page, "#pfPreview img"));
-    ok("the dropzone names the dropped file", /dropped\.png/i.test(await text(page, "#pfPreviewMeta")), await text(page, "#pfPreviewMeta"));
-
-    const fileInput = await page.$("#pfFile");
-    await fileInput.uploadFile(TEST_IMAGE);
-    await wait(400);
-    ok("chosen file previews before upload", await isVisible(page, "#pfPreview img"));
-
-    await submit(page, "#productForm");
-    await wait(1400);
-    ok("publishing jumps to the new category", (await page.evaluate(() => document.querySelector('[data-filter="Streetwear"]').getAttribute("aria-selected"))) === "true");
-    ok("Streetwear grid now holds 2 pieces", (await count(page, ".card")) === 2, String(await count(page, ".card")));
-    ok("newest piece leads the grid", /Selvedge Trucker/.test((await text(page, ".card .card__title")) || ""));
-
-    const upload = stub.calls().find((call) => call.method === "POST" && call.path.startsWith("/storage/v1/object/product-images/"));
-    ok("image uploaded to the product-images bucket", Boolean(upload), stub.calls().map((c) => c.path).join(", "));
-    ok(
-      "upload path is a slug plus a random suffix",
-      upload && /^\/storage\/v1\/object\/product-images\/selvedge-trucker-[a-z0-9]+\.png$/.test(upload.path),
-      upload && upload.path
-    );
-
-    const inserted = stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker");
-    ok("piece inserted into the products table", Boolean(inserted));
-
-    // The grid is re-hydrated from Supabase after the write, not just patched
-    // with the response — the later GET is the proof.
-    const calls = stub.calls();
-    const insertAt = calls.findIndex((call) => call.method === "POST" && call.path === "/rest/v1/products");
-    const refetchAt = calls.findIndex((call, index) => index > insertAt && call.method === "GET" && call.path === "/rest/v1/products");
-    ok(
-      "the catalogue is re-read after publishing",
-      insertAt !== -1 && refetchAt > insertAt,
-      "insert@" + insertAt + " refetch@" + refetchAt
-    );
-    ok(
-      "the re-read asks for the category join, newest first",
-      /categories\(name,slug\)|categories%28name%2Cslug%29/.test(calls[refetchAt] ? calls[refetchAt].query : "") &&
-        /order=created_at\.desc/.test(calls[refetchAt] ? calls[refetchAt].query : ""),
-      calls[refetchAt] && calls[refetchAt].query
-    );
-    ok(
-      "stored image_url is the Supabase public URL",
-      inserted && /^https:\/\/stub\.supabase\.co\/storage\/v1\/object\/public\/product-images\/selvedge-trucker-[a-z0-9]+\.png$/.test(inserted.image_url),
-      inserted && inserted.image_url
-    );
-    ok(
-      "insert wrote the resolved category id, not a name",
-      inserted && inserted.category_id === "c-streetwear",
-      inserted && inserted.category_id
-    );
-    ok("insert sent the KSh price as an integer", inserted && inserted.price === 5400, inserted && String(inserted.price));
-    ok("insert sent the size run as an array", inserted && Array.isArray(inserted.sizes) && inserted.sizes.join(",") === "M,L,XL");
-    ok("no catalogue copy was written to localStorage", (await page.evaluate(() => !localStorage.getItem("creewrld.products.v1"))));
-    ok(
-      "the stored image renders from storage",
-      /storage\/v1\/object\/public\/product-images/.test(await page.evaluate(() => document.querySelector(".card__media img").getAttribute("src")))
-    );
-
-    await click(page, '[data-filter="All Items"]');
-    await wait(200);
-    ok("All Items now lists 6 pieces", (await count(page, ".card")) === 6, String(await count(page, ".card")));
-
-    await click(page, ".card [data-edit]");
-    await wait(300);
-    ok("edit form is pre-filled", (await page.evaluate(() => document.querySelector("#pfTitle").value)) === "Selvedge Trucker" &&
-      (await page.evaluate(() => document.querySelector("#pfPrice").value)) === "5400");
-    await fill(page, "#pfPrice", "3900");
-    await submit(page, "#productForm");
-    await wait(900);
-    ok("edited price re-renders", (await text(page, ".card .card__price")) === "KSh 3,900", await text(page, ".card .card__price"));
-    ok(
-      "edit issued a PATCH scoped to that row",
-      stub.calls().some((call) => call.method === "PATCH" && call.path === "/rest/v1/products" && /id=eq\./.test(call.query)),
-      stub.calls().filter((c) => c.method === "PATCH").map((c) => c.query).join(", ")
-    );
-    ok("edit kept the row id", stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.id === inserted.id);
-    ok("edit did not duplicate the row", stub.rows().filter((rowDB) => rowDB.title === "Selvedge Trucker").length === 1);
-
-    /* ---- stock status: sold out is persisted as in_stock = false */
-    await click(page, ".card [data-edit]");
-    await wait(300);
-    ok("edit pre-fills the stock toggle as in stock", (await page.evaluate(() => document.querySelector("#pfStock").checked)) === true);
-    await page.evaluate(() => {
-      const toggle = document.querySelector("#pfStock");
-      toggle.checked = false;
-      toggle.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await submit(page, "#productForm");
-    await wait(900);
-
-    ok(
-      "sold out is written as in_stock false",
-      stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.in_stock === false,
-      JSON.stringify(stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.in_stock)
-    );
-
-    await click(page, '[data-filter="All Items"]');
-    await wait(250);
-    const soldCard = await page.evaluate(() => {
-      const card = Array.from(document.querySelectorAll(".card")).find((node) =>
-        /Selvedge Trucker/.test(node.textContent)
-      );
-      if (!card) return null;
+    const chrome = await page.evaluate(() => {
+      const keys = [
+        ...Object.keys(localStorage),
+        ...Array.from({ length: window.sessionStorage.length }, (_, index) => window.sessionStorage.key(index))
+      ];
       return {
-        soldOut: card.classList.contains("is-sold-out"),
-        badge: (card.querySelector(".card__badge") || {}).textContent || "",
-        order: (card.querySelector(".card__order") || {}).textContent || "",
-        disabled: Boolean(card.querySelector(".card__order")?.disabled)
+        merchantNodes: Array.from(
+          document.querySelectorAll(
+            "#studioBar, #studioDrawer, #loginModal, #confirmModal, #loginBtn, #loginBtnLabel, #footerAdmin, #mobileLogin, .card__admin, .qv__admin"
+          )
+        ).map((node) => node.id || node.className),
+        editControls: document.querySelectorAll(
+          "[data-edit], [data-delete], [data-qv-edit], [data-qv-delete], [data-new], #studioNew, #studioSeed"
+        ).length,
+        headerActions: Array.from(document.querySelectorAll("header .action")).map((node) =>
+          node.textContent.replace(/\s+/g, " ").trim()
+        ),
+        passphraseFields: document.querySelectorAll('input[type="password"]').length,
+        studioHelper: typeof window.creewrldStudio,
+        keys,
+        adminFlags: [window.sessionStorage.getItem("isAdmin"), localStorage.getItem("isAdmin")]
       };
     });
-    ok("a sold-out piece is marked on the card", soldCard && soldCard.soldOut === true, JSON.stringify(soldCard));
-    ok("the card badge reads SOLD OUT", soldCard && /sold out/i.test(soldCard.badge), soldCard && soldCard.badge);
-    ok("the order button is disabled", soldCard && soldCard.disabled === true && /sold out/i.test(soldCard.order), JSON.stringify(soldCard));
 
-    // Put it back in stock so the delete/refresh path runs from a normal card.
-    await click(page, ".card [data-edit]");
-    await wait(300);
-    await page.evaluate(() => {
-      const toggle = document.querySelector("#pfStock");
-      toggle.checked = true;
-      toggle.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await submit(page, "#productForm");
-    await wait(900);
+    ok("no merchant chrome is in the document", chrome.merchantNodes.length === 0, chrome.merchantNodes.join(", "));
+    ok("no edit, delete or publish affordances anywhere", chrome.editControls === 0, String(chrome.editControls));
     ok(
-      "coming back in stock sets in_stock true",
-      stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.in_stock === true,
-      JSON.stringify(stub.rows().find((rowDB) => rowDB.title === "Selvedge Trucker")?.in_stock)
+      "the header offers the cart and nothing else",
+      chrome.headerActions.length === 1 && /^Cart/i.test(chrome.headerActions[0]),
+      chrome.headerActions.join(" | ")
+    );
+    ok("there is no passphrase field to unlock anything", chrome.passphraseFields === 0, String(chrome.passphraseFields));
+    ok("the old studio console helper is gone", chrome.studioHelper === "undefined", chrome.studioHelper);
+    ok(
+      "nothing merchant-shaped is stored on the device",
+      chrome.adminFlags.every((value) => value === null) && !chrome.keys.some((key) => /admin|session/i.test(key)),
+      chrome.keys.join(", ") || "(no keys)"
     );
 
-    /* ---- delete */
-    const deleteTarget = await page.evaluate(() => {
-      const card = Array.from(document.querySelectorAll(".card")).find((node) =>
-        /Selvedge Trucker/.test(node.textContent)
-      );
-      return card ? card.querySelector("[data-delete]").getAttribute("data-delete") : null;
-    });
-    await page.evaluate((id) => document.querySelector('[data-delete="' + id + '"]').click(), deleteTarget);
-    await wait(250);
-    ok("delete asks for confirmation", await isVisible(page, "#confirmModal"));
+    // The grid query itself: one select with the category join, on-sale rows only.
+    const gridCalls = stub.calls().filter((call) => call.path === "/rest/v1/products" && call.method === "GET");
+    const gridQuery = decodeURIComponent((gridCalls[gridCalls.length - 1] || {}).query || "");
+    ok("the grid selects the joined category", /select=\*, ?categories\(name, ?slug\)/.test(gridQuery), gridQuery);
+    ok("the grid asks for in-stock pieces only", /in_stock=eq\.true/.test(gridQuery), gridQuery);
     ok(
-      "the confirmation asks the exact question",
-      /Delete this piece permanently\?/.test(await text(page, "#confirmTitle")),
-      await text(page, "#confirmTitle")
+      "the shopper session issued no catalogue writes",
+      stub.calls().every((call) => call.method === "GET" || (call.method === "POST" && call.path === "/rest/v1/orders")),
+      stub.calls().filter((call) => call.method !== "GET").map((call) => call.method + " " + call.path).join(", ") || "(none)"
     );
-    await click(page, "#confirmYes");
-    await wait(900);
-    ok("piece is removed from the grid", (await count(page, ".card")) === 5, String(await count(page, ".card")));
-    ok(
-      "delete issued a DELETE on that row",
-      stub.calls().some((call) => call.method === "DELETE" && call.path === "/rest/v1/products"),
-      stub.calls().filter((c) => c.method === "DELETE").map((c) => c.query).join(", ")
-    );
-    ok("row is gone from the table", !stub.rows().some((rowDB) => rowDB.title === "Selvedge Trucker"));
 
-    /* ------------------------------------------------------------ persistence */
+    // A piece switched off in the Supabase Dashboard is not fetched at all, so
+    // it never reaches the grid — no "sold out" card, no disabled button.
+    const catalogueRows = stub.rows().map((rowDB) => ({ ...rowDB }));
+    stub.state.products = [
+      ...catalogueRows,
+      {
+        id: "99999999-9999-4999-8999-999999999999",
+        title: "Retired Piece",
+        category_id: "c-streetwear",
+        price: 1000,
+        condition: "Good",
+        sizes: ["M"],
+        image_url: "assets/img/cargo-street.jpg",
+        description: "Switched off in the dashboard.",
+        in_stock: false,
+        created_at: "2026-01-10T10:00:00.000Z"
+      }
+    ];
+    await page.reload({ waitUntil: "networkidle0" });
+    await wait(700);
+    ok("an out-of-stock piece is not rendered", (await count(page, ".card")) === 5, String(await count(page, ".card")));
+    ok("it is absent from the grid text too", !/Retired Piece/.test((await text(page, "#productGrid")) || ""));
+    ok("every rendered card is buyable", (await count(page, ".card__order[disabled]")) === 0);
+
+    // Put the catalogue back the way the rest of the suite expects it.
+    stub.state.products = catalogueRows;
+    await page.reload({ waitUntil: "networkidle0" });
+    await wait(700);
+
+    /* ---------------------------------------------------------- persistence */
     section("Persistence across reload");
     await click(page, ".card [data-quick]");
     await wait(250);
+    ok("the quick view carries no merchant buttons", (await count(page, "#qvBody [data-qv-edit], #qvBody [data-qv-delete]")) === 0);
     await click(page, "#qvBody [data-qv-add]");
     await wait(300);
     await click(page, "[data-cart-close]");
@@ -918,118 +649,44 @@ async function run() {
     await wait(900);
     ok("cart survives a reload (device-local)", (await text(page, "#cartCount")) === "1", await text(page, "#cartCount"));
     ok("delivery zone survives a reload", (await page.evaluate(() => document.querySelector("#cartZone").value)) === "nairobi-outer");
-    ok("the studio unlock survives a reload", (await page.evaluate(() => document.body.classList.contains("is-admin"))) === true);
-    ok("because sessionStorage still holds it", (await page.evaluate(() => sessionStorage.getItem("isAdmin"))) === "true");
     ok("catalogue is re-read from the database", (await count(page, ".card")) === 5, String(await count(page, ".card")));
     ok(
-      "no products or session keys are left in localStorage",
-      (await page.evaluate(() => [localStorage.getItem("creewrld.products.v1"), localStorage.getItem("creewrld.session.v1")])) .every((value) => value === null)
+      "no products or catalogue copies are left in localStorage",
+      (await page.evaluate(() => [localStorage.getItem("creewrld.products.v1"), localStorage.getItem("creewrld.session.v1")])).every(
+        (value) => value === null
+      )
     );
 
-    /* ------------------------------------------- resilience & starter catalogue */
-    section("Backend resilience");
-    const second = await openPage(browser);
-
-    // A second tab starts locked: sessionStorage does not cross tabs. This is
-    // the one behaviour change from a Supabase session, and it is on purpose —
-    // closing the tab is what ends a studio session.
-    ok("a new tab starts locked", (await second.page.evaluate(() => document.body.classList.contains("is-admin"))) === false);
-
-    await click(second.page, "#loginBtn");
-    await wait(250);
-    await fill(second.page, "#lfPass", "creewrld.com");
-    await submit(second.page, "#loginForm");
-    await wait(400);
-    ok("the passphrase unlocks the new tab too", (await second.page.evaluate(() => document.body.classList.contains("is-admin"))) === true);
-
-    // Empty table -> the merchant can seed the starter catalogue.
+    /* ------------------------------------------- empty catalogue & resilience */
+    section("Empty catalogue and backend resilience");
     stub.state.products = [];
-    await second.page.reload({ waitUntil: "networkidle0" });
+    await page.reload({ waitUntil: "networkidle0" });
     await wait(900);
-    ok("an empty table shows the empty state", await isVisible(second.page, "#emptyState"));
-    ok("the starter-catalogue control appears for the merchant", await isVisible(second.page, "#studioSeed"));
-
-    await click(second.page, "#studioSeed");
-    await wait(300);
-    await click(second.page, "#confirmYes");
-    await wait(1500);
-    const seeded = stub.rows();
-    ok("starter catalogue inserted ten pieces", seeded.length === 10, String(seeded.length));
-    ok("seeded pieces keep their bundled image paths", seeded.every((rowDB) => rowDB.image_url.startsWith("assets/img/")), seeded[0] && seeded[0].image_url);
-    ok("seeded grid renders all ten", (await second.page.$$(".card")).length === 10, String((await second.page.$$(".card")).length));
-
-    // A write rejected by RLS must surface, not silently "succeed".
-    stub.state.failNextWrite = 'new row violates row-level security policy for table "products"';
-    await click(second.page, "#studioNew");
-    await wait(300);
-    await fill(second.page, "#pfTitle", "Blocked Piece");
-    await fill(second.page, "#pfPrice", "1200");
-    await fill(second.page, "#pfSizes", "M");
-    await fill(second.page, "#pfImage", "assets/img/cargo-street.jpg");
-    await fill(second.page, "#pfDescription", "Should never be inserted.");
-    await submit(second.page, "#productForm");
-    await wait(900);
-    ok("a rejected write keeps the drawer open", await isVisible(second.page, "#studioDrawer"));
-    ok("a rejected write shows a readable error", await isVisible(second.page, ".toast"));
-    const blockToast = await second.page.evaluate(() =>
-      Array.from(document.querySelectorAll(".toast")).map((node) => node.textContent.trim()).join(" | ")
+    ok("an empty table shows the shopper empty state", await isVisible(page, "#emptyState"));
+    ok(
+      "the empty copy points at WhatsApp, not at a publish button",
+      /restocked|message the studio/i.test((await text(page, "#emptyText")) || ""),
+      await text(page, "#emptyText")
     );
     ok(
-      "the RLS refusal is spelled out",
-      blockToast.includes(
-        "Failed to publish piece to database. Ensure database RLS policies permit public inserts."
-      ),
-      blockToast
+      "no seeding control is offered for an empty table",
+      (await page.evaluate(() => document.querySelectorAll("#studioSeed, [data-seed]").length)) === 0
     );
-    ok("nothing was inserted", stub.rows().length === 10, String(stub.rows().length));
-    await click(second.page, "#studioDrawer [data-close]");
-    await wait(300);
 
     // Unreachable backend: the storefront explains itself instead of looking empty.
     stub.state.offline = true;
-    await second.page.reload({ waitUntil: "domcontentloaded" });
-    await until(async () => /reach/i.test((await text(second.page, "#dataNotice")) || ""), 15000);
-    ok("an unreachable backend raises the data notice", await isVisible(second.page, "#dataNotice"));
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await until(async () => /reach/i.test((await text(page, "#dataNotice")) || ""), 15000);
+    ok("an unreachable backend raises the data notice", await isVisible(page, "#dataNotice"));
     ok(
       "the notice explains the problem",
-      /can't reach|can’t reach|couldn't|couldn’t/i.test((await text(second.page, "#dataNotice")) || ""),
-      await text(second.page, "#dataNotice")
+      /can't reach|can\u2019t reach|couldn't|couldn\u2019t/i.test((await text(page, "#dataNotice")) || ""),
+      await text(page, "#dataNotice")
     );
     stub.state.offline = false;
-    await second.page.close();
-
-    /* --------------------------------------------------------------- sign out */
-    section("Sign out");
-    ok("the header link reads LOGOUT while signed in", (await text(page, "#loginBtnLabel")) === "Logout", await text(page, "#loginBtnLabel"));
-    ok("the mobile menu offers the same way out", (await text(page, "#mobileLogin")) === "Logout", await text(page, "#mobileLogin"));
-
-    await click(page, "#loginBtn");
-    await wait(900);
-    ok("LOGOUT ends the session", (await page.evaluate(() => document.body.classList.contains("is-admin"))) === false);
-    ok("the header link reverts to LOGIN / ADMIN", (await text(page, "#loginBtnLabel")) === "Login / Admin", await text(page, "#loginBtnLabel"));
-    ok("the mobile menu reverts too", (await text(page, "#mobileLogin")) === "Login / Admin", await text(page, "#mobileLogin"));
-    ok("the studio bar disappears", (await isVisible(page, "#studioBar")) === false);
-    ok(
-      "card controls are hidden from the public again",
-      (await page.evaluate(() => window.getComputedStyle(document.querySelector(".card__admin")).visibility)) !== "visible"
-    );
-    ok(
-      "the sessionStorage flag is removed",
-      (await page.evaluate(() => sessionStorage.getItem("isAdmin"))) === null,
-      String(await page.evaluate(() => sessionStorage.getItem("isAdmin")))
-    );
-    ok(
-      "nothing is left in localStorage either",
-      (await page.evaluate(() => !localStorage.getItem("isAdmin") && !localStorage.getItem("creewrld.auth.v2")))
-    );
-
-    // Signed out, the header link opens the modal again.
-    await click(page, "#loginBtn");
-    await wait(300);
-    ok("the signed-out link reopens the login modal", await isVisible(page, "#loginModal"));
-    await click(page, "#loginModal [data-close]");
-    await wait(300);
-
+    stub.state.products = catalogueRows;
+    await page.reload({ waitUntil: "networkidle0" });
+    await wait(700);
 
     /* ------------------------------------------------ typography & contrast */
     section("Typography & contrast");
@@ -1088,7 +745,6 @@ async function run() {
         .map((el) => el.className + " @ " + getComputedStyle(el).fontSize);
       return {
         nav: grab(".nav__link"),
-        login: grab(".action:not(.action--cart)"),
         cart: grab(".action--cart"),
         meta: grab(".eyebrow"),
         intro: grab(".hero__lede"),
@@ -1108,12 +764,12 @@ async function run() {
       JSON.stringify(type.nav)
     );
     ok(
-      "LOGIN / ADMIN + CART match the nav spec",
-      eq(type.login.size, 13) && type.login.weight === "500" && eq(type.cart.size, 13) && type.cart.weight === "500"
+      "CART matches the nav spec",
+      eq(type.cart.size, 13) && type.cart.weight === "500"
     );
     ok(
       "nav links use off-white #E5E5E5",
-      type.nav.color === "rgb(229, 229, 229)" && type.login.color === "rgb(229, 229, 229)" && type.cart.color === "rgb(229, 229, 229)",
+      type.nav.color === "rgb(229, 229, 229)" && type.cart.color === "rgb(229, 229, 229)",
       type.nav.color
     );
     ok(
@@ -1136,7 +792,7 @@ async function run() {
     );
     ok(
       "every reading colour clears WCAG AA (4.5:1)",
-      [type.nav, type.login, type.cart, type.meta, type.intro, type.cardMeta, type.cardPrice, type.cardOrder, type.cardBadge, type.sectionLabel]
+      [type.nav, type.cart, type.meta, type.intro, type.cardMeta, type.cardPrice, type.cardOrder, type.cardBadge, type.sectionLabel]
         .every((t) => t && t.ratio >= 4.5),
       JSON.stringify({ nav: type.nav.ratio, meta: type.meta.ratio, intro: type.intro.ratio, card: type.cardMeta.ratio })
     );
@@ -1175,27 +831,12 @@ async function run() {
     await page.keyboard.press("Escape");
     await wait(300);
 
-    await click(page, "#loginBtn");
-    await wait(400);
-    const loginViolations = await axeViolations(page);
-    ok("login modal has no axe violations", loginViolations.length === 0, JSON.stringify(loginViolations));
+    await click(page, ".card [data-quick]");
+    await wait(500);
+    const quickViolations = await axeViolations(page);
+    ok("quick view has no axe violations", quickViolations.length === 0, JSON.stringify(quickViolations));
     await page.keyboard.press("Escape");
     await wait(300);
-
-    // The studio bar and drawer are a second surface entirely; axe checks them too.
-    await page.evaluate(() => sessionStorage.setItem("isAdmin", "true"));
-    await page.reload({ waitUntil: "networkidle0" });
-    await wait(700);
-    const barViolations = await axeViolations(page);
-    ok("the studio bar has no axe violations", barViolations.length === 0, JSON.stringify(barViolations));
-
-    await click(page, "#studioNew");
-    await wait(600);
-    const drawerViolations = await axeViolations(page);
-    ok("the studio drawer has no axe violations", drawerViolations.length === 0, JSON.stringify(drawerViolations));
-    await page.keyboard.press("Escape");
-    await wait(300);
-    await page.evaluate(() => sessionStorage.removeItem("isAdmin"));
 
     /* ---------------------------------------------------------- responsive */
     section("Responsive layout (320px \u2192 1920px)");
@@ -1258,7 +899,7 @@ async function run() {
 
     // The whole point of the centralized client: PostgREST rejects a request
     // with no `apikey` header ("No API key found in request"), so no call may
-    // ever leave without one — catalogue reads, studio writes, uploads, orders.
+    // ever leave without one — catalogue reads and order inserts alike.
     const allCalls = stub.calls();
     const callsWithoutKey = allCalls.filter((call) => !call.apikey);
     ok(

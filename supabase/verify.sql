@@ -13,9 +13,11 @@
 --                       is talking to a different database
 --    tables             all three must say true; a missing table is the 404
 --                       `Could not find the table 'public.products'`
---    policies           products needs 4, categories 2, orders 1
---    grants             anon needs SELECT+INSERT on categories, SELECT/INSERT/
---                       UPDATE/DELETE on products, INSERT on orders
+--    policies           products needs 1 (read), categories 1 (read),
+--                       orders 1 (insert) — anything more is a leftover write
+--                       policy from the old in-browser studio
+--    grants             anon needs SELECT on categories, SELECT on products,
+--                       INSERT on orders — and nothing else
 --    bucket             public = true, 6291456 bytes, four image types — a
 --                       missing bucket is the 400 on image upload
 --    storage policies   four rows for product-images
@@ -55,7 +57,7 @@ select
   g.tbl                        as "table",
   r.role,
   coalesce(string_agg(distinct a.privilege_type, ', ' order by a.privilege_type), '(none)') as privileges
-from (values ('categories','SELECT,INSERT'), ('products','SELECT,INSERT,UPDATE,DELETE'), ('orders','INSERT')) as g(tbl, needed)
+from (values ('categories','SELECT'), ('products','SELECT'), ('orders','INSERT')) as g(tbl, needed)
 cross join (values ('anon'), ('authenticated')) as r(role)
 left join information_schema.role_table_grants a
   on a.table_schema = 'public'

@@ -1,31 +1,20 @@
 /**
- * Application state: the live catalogue, the cart, the delivery zone and the
- * studio lock.
+ * Application state: the live catalogue, the cart and the delivery zone.
  *
- * The catalogue lives in Supabase — this module is the only place that talks
- * to it. The studio lock is a passphrase check plus a sessionStorage flag, and
- * the cart and delivery zone are per-shopper scratch state. Nothing about the
- * inventory is stored on the device.
+ * The catalogue is read-only in the browser — pieces are curated by hand in the
+ * Supabase Dashboard (SQL editor or Table Editor) and this module is the only
+ * place that reads them. The cart and the delivery zone are per-shopper scratch
+ * state; nothing about the inventory is stored on the device.
  *
  * Every mutation notifies subscribers, so the UI stays a pure render of state.
  */
 
 import { CATEGORIES, DEFAULT_ZONE, ZONES } from "./config.js";
-import { SEED } from "./catalog.js";
 import { readJSON, readRaw, writeJSON, writeRaw } from "./lib/storage.js";
-import { normalizeSizes, sum } from "./lib/format.js";
+import { sum } from "./lib/format.js";
 import { cartTotals as computeCartTotals } from "./lib/order.js";
 import { supabaseConfig } from "./lib/supabase.js";
-import { isStudioUnlocked, lockStudio, readStudioFlag, unlockStudio } from "./data/studio.js";
-import {
-  countProducts,
-  deleteProductRow,
-  fetchCatalogue,
-  insertProduct,
-  insertProducts,
-  subscribeToProducts,
-  updateProduct
-} from "./data/products.js";
+import { fetchCatalogue, subscribeToProducts } from "./data/products.js";
 
 export const state = {
   products: [],
@@ -33,7 +22,6 @@ export const state = {
   cart: [],
   filter: "All Items",
   zone: DEFAULT_ZONE,
-  admin: false,
   loading: true,
   error: null,
   configured: supabaseConfig.configured
@@ -105,7 +93,7 @@ export function saveZone() {
 
 /**
  * Load the live catalogue. Safe to call any time: it is also the refresh used
- * after a write, when the tab regains focus, and after a failed first attempt.
+ * when the tab regains focus and after a failed first attempt.
  */
 export async function loadCatalogue({ quiet = false } = {}) {
   if (!state.configured) {
@@ -137,73 +125,11 @@ export async function loadCatalogue({ quiet = false } = {}) {
   return state;
 }
 
-/**
- * Re-read the catalogue from Supabase and repaint.
- *
- * Called after a write succeeds. The insert/update response is merged into
- * state first so the piece appears immediately, then this replaces state with
- * what the database actually holds — which is what makes the row canonical
- * (server defaults, the joined category, another device's changes).
- */
-export async function refreshCatalogue() {
-  return loadCatalogue({ quiet: true });
-}
-
-/** Real-time catalogue updates across devices. Returns an unsubscribe fn. */
+/** Real-time catalogue updates across the owner's devices. Returns an unsubscribe fn. */
 export function watchCatalogue() {
   return subscribeToProducts(() => {
     loadCatalogue({ quiet: true });
   });
-}
-
-/* ---------------------------------------------------------------- session */
-
-/** Read this tab's stored unlock, so a reload keeps the merchant in. */
-export function restoreStudio() {
-  state.admin = isStudioUnlocked();
-  emit("session");
-  return state.admin;
-}
-
-/**
- * Make `state.admin` agree with sessionStorage — the single source of truth
- * for the studio lock. Emits only when the value actually changes, so calling
- * this on every render cannot loop.
- */
-export function syncStudioFromStorage() {
-  const stored = readStudioFlag();
-
-  // null means the browser would not tell us (storage blocked). Keep whatever
-  // this page already decided — a live unlock must not be undone by a failed
-  // read, and a locked page must not be unlocked by one either.
-  if (stored === null) return state.admin;
-
-  if (state.admin !== stored) {
-    state.admin = stored;
-    emit("session");
-  }
-  return stored;
-}
-
-/**
- * Compare a typed passphrase against the studio passphrase.
- * Returns { ok } or { ok: false } — no network, no account, no session.
- */
-export function unlockStudioWith(passphrase) {
-  const ok = unlockStudio(passphrase);
-  if (ok) {
-    state.admin = true;
-    emit("session");
-  }
-  return { ok };
-}
-
-/** Close the studio and forget the flag for this tab. */
-export function lockStudioSession() {
-  lockStudio();
-  state.admin = false;
-  emit("session");
-  return { ok: true };
 }
 
 /* --------------------------------------------------------------- selectors */
@@ -311,52 +237,6 @@ export function clearCart() {
   state.cart = [];
   saveCart();
   emit("cart");
-}
-
-/* ------------------------------------------------------- merchant writes */
-
-/**
- * Insert or update a piece. `data.id` present means update.
- * Throws with a readable message on failure so the form can show it.
- */
-export async function saveProduct(data) {
-  const saved = data.id
-    ? await updateProduct(data.id, data, state.categories)
-    : await insertProduct(data, state.categories);
-
-  if (!saved) throw new Error("The catalogue did not return the saved piece.");
-
-  const index = state.products.findIndex((product) => product.id === saved.id);
-  if (index === -1) state.products.unshift(saved);
-  else state.products[index] = saved;
-
-  emit("products");
-  return saved;
-}
-
-export async function deleteProduct(id) {
-  const product = getProduct(id);
-  if (!product) return null;
-
-  await deleteProductRow(id);
-
-  state.products = state.products.filter((item) => item.id !== id);
-  state.cart = state.cart.filter((line) => line.id !== id);
-  saveCart();
-  emit("products");
-  emit("cart");
-  return product;
-}
-
-/** Insert the ten starter pieces — only offered while the table is empty. */
-export async function seedStarterCatalogue() {
-  const existing = await countProducts();
-  if (existing > 0) throw new Error("The catalogue already has pieces — nothing was inserted.");
-
-  const created = await insertProducts(SEED, state.categories);
-  state.products = created;
-  emit("products");
-  return created.length;
 }
 
 /* ---------------------------------------------------------------------- boot */

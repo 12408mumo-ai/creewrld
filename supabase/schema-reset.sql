@@ -2,7 +2,7 @@
 --  CREE WRLD — FRESH START (DESTRUCTIVE)
 --
 --  Wipes the shop's database and rebuilds it from nothing: three tables, the
---  four categories, RLS policies that suit a passphrase-gated studio, the
+--  four categories, read-only RLS policies for the storefront, the
 --  `product-images` bucket and its policies, and the Realtime publication.
 --
 --  Supabase dashboard → SQL Editor → New query → paste all of this → Run.
@@ -17,18 +17,15 @@
 --  re-running never errors.
 --
 --  After running it:
---    • the storefront renders an empty collection until a piece is published
---      (or until you run supabase/seed.sql for the original ten)
---    • the studio passphrase is unchanged — it lives in the browser bundle,
---      not in the database: creewrld.com
+--    • the storefront renders an empty collection until a piece is added (or
+--      until you run supabase/seed.sql for the original ten)
 --
 --  ── About the policies at the bottom ──────────────────────────────────────
---  The studio is unlocked by a passphrase compared in the browser, so the page
---  writes with the public anon key and the database must allow anonymous
---  writes. A passphrase shipped in the bundle is not a security boundary; it
---  keeps casual visitors out of the merchant UI, nothing more. If you later
---  move to real Supabase Auth, replace the write policies with
---  `to authenticated` ones — see "Studio access" in the README.
+--  The storefront is read-only. The anonymous role may `select` the catalogue
+--  and `insert` an order; there is no insert, update or delete grant on
+--  `products` or `categories`, and the bucket is public-read only. Pieces are
+--  curated in the Supabase Dashboard, which writes with the service role and
+--  is not subject to row level security.
 -- ============================================================================
 
 
@@ -83,7 +80,7 @@ $drop_types$;
 
 -- ========================================================= 2. core schema
 -- ---------------------------------------------------------------- categories
--- `name` is unique as well as `slug`: the studio resolves a piece's category by
+-- `name` is unique as well as `slug`: the storefront resolves a piece's category by
 -- its display name (the four filter tabs), so two rows sharing a name would be
 -- ambiguous.
 create table public.categories (
@@ -94,13 +91,13 @@ create table public.categories (
   created_at  timestamptz not null default now()
 );
 
-comment on table public.categories is 'Filter tabs and the studio''s category menu.';
+comment on table public.categories is 'Filter tabs for the storefront.';
 comment on column public.categories.slug is 'URL-safe identifier: sneakers, streetwear, old-money, y2k.';
 
 -- ------------------------------------------------------------------ products
 -- Column order follows the brief; the three columns from `condition` down are
--- required by the storefront (card badge, size run) and the studio (audit of
--- edits), so they live here too.
+-- required by the storefront (card badge, size run, the `in_stock` switch), so
+-- they live here too.
 create table public.products (
   id           uuid         primary key default gen_random_uuid(),
   title        text         not null check (char_length(trim(title)) >= 1),
@@ -201,12 +198,14 @@ revoke all on public.orders     from anon, authenticated;
 
 grant usage on schema public to anon, authenticated;
 
-grant select, insert, update, delete on public.products   to anon, authenticated;
-grant select, insert on public.categories                 to anon, authenticated;
-grant insert on public.orders                             to anon, authenticated;
+grant select on public.products   to anon, authenticated;
+grant select on public.categories to anon, authenticated;
+grant insert on public.orders     to anon, authenticated;
 
--- No `select` on orders, and none granted to the browser on purpose: an order
--- carries a customer's name and phone number.
+-- The storefront is read-only: no insert, update or delete is granted on the
+-- catalogue, because pieces are curated in the Supabase Dashboard (service
+-- role), not from a browser.
+-- No `select` on orders either: an order carries a customer's name and phone.
 
 
 -- ======================================================== 5. row level security
@@ -227,25 +226,17 @@ create policy "Public can view products"
   to anon, authenticated
   using (true);
 
--- --------------------------------- public writes: the passphrase-gated studio
-drop policy if exists "Allow public insert products" on public.products;
-create policy "Allow public insert products"
-  on public.products for insert
-  to anon, authenticated
-  with check (true);
-
-drop policy if exists "Allow public update products" on public.products;
-create policy "Allow public update products"
-  on public.products for update
-  to anon, authenticated
-  using (true)
-  with check (true);
-
-drop policy if exists "Allow public delete products" on public.products;
-create policy "Allow public delete products"
-  on public.products for delete
-  to anon, authenticated
-  using (true);
+-- --------------------------------------- no public writes: the shop is read-only
+-- A previous version of this project ran a passphrase-gated "studio" in the
+-- browser and granted the anonymous role insert/update/delete on `products`.
+-- Both the grants and the policies are gone; the names are dropped here so a
+-- database that still carries them is cleaned up. Catalogue changes happen in
+-- the Supabase Dashboard, which uses the service role and bypasses RLS.
+drop policy if exists "Allow public insert products"   on public.products;
+drop policy if exists "Allow public update products"   on public.products;
+drop policy if exists "Allow public delete products"   on public.products;
+drop policy if exists "products writable from studio"  on public.products;
+drop policy if exists "categories writable from studio" on public.categories;
 
 -- -------------------------------------------------- public writes: one order
 -- A shopper may place an order and may never read one back.
@@ -283,37 +274,18 @@ begin
   $bucket$;
 
   execute 'drop policy if exists "product images are public" on storage.objects';
+  execute 'drop policy if exists "staff upload product images" on storage.objects';
+  execute 'drop policy if exists "staff update product images" on storage.objects';
+  execute 'drop policy if exists "staff delete product images" on storage.objects';
   execute 'drop policy if exists "studio uploads product images" on storage.objects';
   execute 'drop policy if exists "studio updates product images" on storage.objects';
   execute 'drop policy if exists "studio deletes product images" on storage.objects';
 
-  -- Anyone may load a product photo; only a holder of the passphrase UI may
-  -- add, replace or remove one.
+  -- Anyone may load a product photo; nobody may add, replace or remove one from
+  -- a browser. Photography is uploaded from the Supabase Dashboard (Storage).
   execute $pol$
     create policy "product images are public"
       on storage.objects for select
-      using (bucket_id = 'product-images')
-  $pol$;
-
-  execute $pol$
-    create policy "studio uploads product images"
-      on storage.objects for insert
-      to anon, authenticated
-      with check (bucket_id = 'product-images')
-  $pol$;
-
-  execute $pol$
-    create policy "studio updates product images"
-      on storage.objects for update
-      to anon, authenticated
-      using (bucket_id = 'product-images')
-      with check (bucket_id = 'product-images')
-  $pol$;
-
-  execute $pol$
-    create policy "studio deletes product images"
-      on storage.objects for delete
-      to anon, authenticated
       using (bucket_id = 'product-images')
   $pol$;
 end
@@ -351,7 +323,8 @@ $realtime$;
 --   union all
 --   select 'orders',     count(*) from public.orders;
 --
--- and this to confirm the studio can write without a Supabase Auth session:
+-- and this to confirm the browser only holds read grants (products and
+-- categories should list SELECT, orders only INSERT):
 --
 --   select cmd, policyname, roles
 --     from pg_policies

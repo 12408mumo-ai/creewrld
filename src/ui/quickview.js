@@ -4,7 +4,7 @@
 
 import { $, $$, esc, money } from "../lib/format.js";
 import { resolveImage } from "../lib/images.js";
-import { getProduct, state } from "../store.js";
+import { getProduct } from "../store.js";
 import { closeLayer, openLayer } from "./layers.js";
 
 const modal = () => $("#quickView");
@@ -30,7 +30,7 @@ export const quickViewProduct = () => getProduct(active.id);
 
 export const isQuickViewOpen = () => Boolean(modal()) && modal().classList.contains("is-open");
 
-/** Re-paint after the catalogue or session changes; close if the piece is gone. */
+/** Re-paint after the catalogue changes; close if the piece is gone. */
 export function refreshQuickView() {
   if (!isQuickViewOpen()) return;
   if (!getProduct(active.id)) {
@@ -80,15 +80,11 @@ function renderQuickView() {
           '<button type="button" class="btn btn--primary" data-qv-order><span>Order</span></button>' +
           '<button type="button" class="btn btn--ghost" data-qv-add>Add to cart</button>' +
         "</div>" +
-        '<div class="qv__admin"' + (state.admin ? "" : " hidden") + ">" +
-          '<button type="button" class="btn btn--ghost" data-qv-edit>Edit</button>' +
-          '<button type="button" class="btn btn--ghost" data-qv-delete>Delete</button>' +
-        "</div>" +
       "</div>" +
     "</div>";
 }
 
-/** handlers: { onOrder(id, size), onAdd(id, size), onEdit(product), onDelete(product) } */
+/** handlers: { onOrder(id, size), onAdd(id, size) } */
 export function bindQuickView(handlers) {
   body().addEventListener("click", (event) => {
     const sizeChip = event.target.closest("[data-qv-size]");
@@ -110,16 +106,6 @@ export function bindQuickView(handlers) {
 
     if (event.target.closest("[data-qv-add]")) {
       handlers.onAdd(active.id, active.size);
-      return;
-    }
-
-    if (event.target.closest("[data-qv-edit]")) {
-      handlers.onEdit(getProduct(active.id));
-      return;
-    }
-
-    if (event.target.closest("[data-qv-delete]")) {
-      handlers.onDelete(getProduct(active.id));
     }
   });
 }

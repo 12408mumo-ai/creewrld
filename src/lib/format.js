@@ -17,7 +17,7 @@ export const esc = (value) =>
 /** Format an integer amount as Kenyan Shillings: 6500 → "KSh 6,500". */
 export const money = (n) => "KSh " + Math.round(Number(n) || 0).toLocaleString("en-KE");
 
-/** Collision-resistant id for merchant-created products. */
+/** Collision-resistant id, used when a row arrives without one. */
 export const uid = () => "cw-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
 export const sum = (list, pick) => list.reduce((total, item) => total + pick(item), 0);

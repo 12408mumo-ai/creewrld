@@ -1,9 +1,9 @@
 /**
  * Supabase client — the single connection to the live backend.
  *
- * Every request the storefront makes (catalogue reads, studio writes, image
- * uploads, order inserts) goes through this one client, which is what
- * guarantees the `apikey` header is on all of them. Nothing in `src/` calls
+ * Every request the storefront makes (catalogue reads, order inserts) goes
+ * through this one client, which is what guarantees the `apikey` header is on
+ * all of them. Nothing in `src/` calls
  * `fetch` against Supabase directly — `grep -rn "fetch(" src/` finds only this
  * module and the wrapper it installs below.
  *
@@ -91,10 +91,10 @@ export const CONFIG_ERROR = configErrorFor(resolved);
  */
 export const supabase = supabaseConfig.configured
   ? createClient(supabaseConfig.url, supabaseConfig.anonKey, {
-      // The storefront does not use Supabase Auth any more: the studio is
-      // unlocked with a passphrase in the browser. Leaving session persistence
-      // on would make the client hunt for a refresh token on every boot — and
-      // fire a doomed request for anyone who signed in before this change.
+      // The storefront is read-only and anonymous: there is no sign-in, so
+      // session persistence would only make the client hunt for a refresh
+      // token on every boot — and fire a doomed request for anyone who signed
+      // in on this device before the shop became read-only.
       auth: {
         persistSession: false,
         autoRefreshToken: false,
@@ -182,7 +182,7 @@ export function withTimeout(promise, ms = 15000, message = "The database took to
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-/** Turn a PostgREST / GoTrue error object into something a merchant can act on. */
+/** Turn a PostgREST / GoTrue error object into something a human can act on. */
 export function describeError(error, fallback = "Something went wrong. Please try again.") {
   if (!error) return fallback;
   if (error.code === "SUPABASE_NOT_CONFIGURED") return CONFIG_ERROR;

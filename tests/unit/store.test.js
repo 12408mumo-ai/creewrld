@@ -18,7 +18,6 @@ function memoryStorage() {
 }
 
 let storage;
-let session;
 
 /** A catalogue row exactly as PostgREST returns it (with the category join). */
 const row = (overrides = {}) => ({
@@ -38,7 +37,7 @@ const row = (overrides = {}) => ({
 /**
  * Seed the in-memory store with products without touching the network: the
  * catalogue is loaded by `loadCatalogue()`, so the data layer is mocked here
- * and the store's own logic (cart, totals, filters, session) is exercised.
+ * and the store's own logic (cart, totals, filters) is exercised.
  */
 async function freshStore({ products = [row()], categories = [{ id: "cat-sneakers", name: "Sneakers", slug: "sneakers", sortOrder: 1 }] } = {}) {
   vi.resetModules();
@@ -56,18 +55,8 @@ async function freshStore({ products = [row()], categories = [{ id: "cat-sneaker
   vi.doMock("../../src/data/products.js", () => ({
     // Mirror the real query layer: rows go through the same mapper.
     fetchCatalogue: vi.fn(async () => ({ products: rowsToProducts(products), categories })),
-    countProducts: vi.fn(async () => products.length),
-    insertProduct: vi.fn(async (product) => ({ ...product, id: "new-id" })),
-    insertProducts: vi.fn(async (list) => list),
-    updateProduct: vi.fn(async (id, product) => ({ ...product, id })),
-    deleteProductRow: vi.fn(async () => true),
     subscribeToProducts: vi.fn(() => () => {})
   }));
-
-  // The studio lock is real here, not mocked: it only needs a sessionStorage
-  // stand-in, so the passphrase comparison is exercised as shipped.
-  const studioLib = await import("../../src/data/studio.js");
-  studioLib.setStudioStorage(session);
 
   const store = await import("../../src/store.js");
   const storageLib = await import("../../src/lib/storage.js");
@@ -81,7 +70,6 @@ const product = (store) => store.state.products[0];
 
 beforeEach(() => {
   storage = memoryStorage();   // localStorage stand-in — cart and zone only
-  session = memoryStorage();   // sessionStorage stand-in — the studio flag
 });
 
 describe("catalogue", () => {
@@ -96,7 +84,8 @@ describe("catalogue", () => {
     const store = await freshStore();
     expect(store.state.products).toHaveLength(1);
     expect(storage.getItem("creewrld.products.v1")).toBeNull();
-    expect(storage.getItem("creewrld.session.v1")).toBeNull();
+    // Nothing merchant-shaped is ever written either.
+    expect(storage.getItem("isAdmin")).toBeNull();
   });
 
   it("builds category tabs from the live categories", async () => {
@@ -191,160 +180,5 @@ describe("cart", () => {
     const store = await freshStore();
     store.addToCart(product(store).id, "41", 20);
     expect(store.cartCount()).toBe(9);
-  });
-});
-
-describe("studio lock", () => {
-  it("unlocks with the studio passphrase", async () => {
-    const store = await freshStore();
-    expect(store.state.admin).toBe(false);
-
-    const result = store.unlockStudioWith("creewrld.com");
-    expect(result.ok).toBe(true);
-    expect(store.state.admin).toBe(true);
-  });
-
-  it("remembers the unlock in sessionStorage, under isAdmin", async () => {
-    const store = await freshStore();
-    store.unlockStudioWith("creewrld.com");
-    expect(session.getItem("isAdmin")).toBe("true");
-  });
-
-  it("rejects a wrong passphrase without granting access", async () => {
-    const store = await freshStore();
-    const result = store.unlockStudioWith("creewrld");
-    expect(result.ok).toBe(false);
-    expect(store.state.admin).toBe(false);
-    expect(session.getItem("isAdmin")).toBeNull();
-  });
-
-  it("tolerates surrounding spaces and unexpected case", async () => {
-    const store = await freshStore();
-    expect(store.unlockStudioWith("  CreeWrld.COM  ").ok).toBe(true);
-    expect(store.state.admin).toBe(true);
-  });
-
-  it("restores the unlock after a reload of the same tab", async () => {
-    const first = await freshStore();
-    first.unlockStudioWith("creewrld.com");
-
-    const second = await freshStore();
-    expect(second.state.admin).toBe(false);
-    second.restoreStudio();
-    expect(second.state.admin).toBe(true);
-  });
-
-  it("locking clears the flag and the merchant state", async () => {
-    const store = await freshStore();
-    store.unlockStudioWith("creewrld.com");
-    store.lockStudioSession();
-    expect(store.state.admin).toBe(false);
-    expect(session.getItem("isAdmin")).toBeNull();
-    expect(store.restoreStudio()).toBe(false);
-  });
-
-  it("never writes the studio flag to localStorage", async () => {
-    const store = await freshStore();
-    store.unlockStudioWith("creewrld.com");
-    expect(storage.getItem("isAdmin")).toBeNull();
-    expect(JSON.stringify(Object.keys(storage._map))).not.toMatch(/admin|session/i);
-  });
-});
-
-describe("studio state from storage", () => {
-  it("adopts the flag written by another part of the page", async () => {
-    const store = await freshStore();
-    expect(store.state.admin).toBe(false);
-
-    session.setItem("isAdmin", "true");
-    expect(store.syncStudioFromStorage()).toBe(true);
-    expect(store.state.admin).toBe(true);
-  });
-
-  it("drops admin when the flag is removed, e.g. a logout elsewhere", async () => {
-    const store = await freshStore();
-    store.unlockStudioWith("creewrld.com");
-    expect(store.state.admin).toBe(true);
-
-    session.removeItem("isAdmin");
-    expect(store.syncStudioFromStorage()).toBe(false);
-    expect(store.state.admin).toBe(false);
-  });
-
-  it("does not undo a live unlock when storage cannot be read", async () => {
-    const store = await freshStore();
-    store.unlockStudioWith("creewrld.com");
-    expect(store.state.admin).toBe(true);
-
-    // A browser that blocks sessionStorage must not look like a logout.
-    const { setStudioStorage } = await import("../../src/data/studio.js");
-    setStudioStorage({
-      getItem() {
-        throw new Error("blocked");
-      },
-      setItem() {
-        throw new Error("blocked");
-      },
-      removeItem() {
-        throw new Error("blocked")
-      }
-    });
-
-    expect(store.syncStudioFromStorage()).toBe(true);
-    expect(store.state.admin).toBe(true);
-
-    const studioLib = await import("../../src/data/studio.js");
-    studioLib.setStudioStorage(session);
-  });
-});
-
-describe("merchant writes", () => {
-  it("adds a saved piece to the front of the catalogue", async () => {
-    const store = await freshStore();
-    await store.saveProduct({
-      title: "New Piece",
-      category: "Sneakers",
-      price: 1000,
-      condition: "New",
-      sizes: ["M"],
-      image: "https://example.com/a.jpg",
-      description: "Fresh."
-    });
-    expect(store.state.products).toHaveLength(2);
-  });
-
-  it("replaces an edited piece in place", async () => {
-    const store = await freshStore();
-    const original = product(store);
-    await store.saveProduct({ ...original, title: "Renamed" });
-    expect(store.state.products).toHaveLength(1);
-    expect(store.state.products[0].title).toBe("Renamed");
-  });
-
-  it("removes a deleted piece from the catalogue and the cart", async () => {
-    const store = await freshStore();
-    const id = product(store).id;
-    store.addToCart(id, "41", 1);
-    await store.deleteProduct(id);
-    expect(store.state.products).toHaveLength(0);
-    expect(store.cartLines()).toHaveLength(0);
-  });
-
-  it("surfaces a write failure instead of pretending it saved", async () => {
-    const store = await freshStore();
-    const products = await import("../../src/data/products.js");
-    products.insertProduct.mockRejectedValueOnce(new Error("new row violates row-level security policy"));
-
-    await expect(
-      store.saveProduct({
-        title: "Blocked",
-        category: "Sneakers",
-        price: 1000,
-        condition: "New",
-        sizes: ["M"],
-        image: "https://example.com/a.jpg",
-        description: "Nope."
-      })
-    ).rejects.toThrow(/row-level security/i);
   });
 });
