@@ -1,5 +1,5 @@
 /**
- * Storefront configuration — single source of truth for the studio.
+ * Storefront configuration — the constants the shop runs on.
  * Values here are bundled at build time; nothing is fetched at runtime.
  */
 
@@ -11,8 +11,8 @@ export const CONFIG = {
 
 /**
  * The cart and the delivery zone are the only things kept on the device: they
- * are per-shopper scratch state. Catalogue, merchant session and orders all
- * live in Supabase (see src/data/).
+ * are per-shopper scratch state. Catalogue and orders live in Supabase
+ * (see src/data/).
  */
 export const STORAGE = {
   cart: "creewrld.cart.v1",

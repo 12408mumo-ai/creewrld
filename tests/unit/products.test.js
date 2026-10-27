@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { productToRow, rowToProduct, rowsToProducts, sortCategories } from "../../src/lib/products.js";
-
-const categories = [
-  { id: "cat-sneakers", name: "Sneakers", slug: "sneakers" },
-  { id: "cat-old-money", name: "Old Money", slug: "old-money" }
-];
+import { PRODUCT_SELECT, rowToProduct, rowsToProducts, sortCategories } from "../../src/lib/products.js";
 
 const dbRow = (overrides = {}) => ({
   id: "11111111-1111-4111-8111-111111111111",
@@ -70,61 +65,6 @@ describe("rowToProduct", () => {
   });
 });
 
-describe("productToRow", () => {
-  it("resolves the category name to its foreign key", () => {
-    const row = productToRow(
-      {
-        title: "Camel Overcoat",
-        category: "Old Money",
-        price: 12500,
-        condition: "Excellent",
-        sizes: ["M", "L"],
-        image: "https://cdn.example.com/b.jpg",
-        description: "Camel."
-      },
-      categories
-    );
-    expect(row.category_id).toBe("cat-old-money");
-    expect(row.price).toBe(12500);
-    expect(row.sizes).toEqual(["M", "L"]);
-    expect(row.image_url).toBe("https://cdn.example.com/b.jpg");
-  });
-
-  it("writes the stock switch as in_stock", () => {
-    const base = { title: "Tee", category: "Sneakers", price: 100, sizes: ["M"] };
-    expect(productToRow({ ...base, inStock: true }, categories).in_stock).toBe(true);
-    expect(productToRow({ ...base, inStock: false }, categories).in_stock).toBe(false);
-    // An older caller that says nothing keeps the piece on sale.
-    expect(productToRow(base, categories).in_stock).toBe(true);
-  });
-
-  it("rounds a price typed as a decimal", () => {
-    const row = productToRow({ title: "Tee", category: "Sneakers", price: "1499.6", sizes: ["M"] }, categories);
-    expect(row.price).toBe(1500);
-  });
-
-  it("leaves category_id null when the name is unknown", () => {
-    const row = productToRow({ title: "Tee", category: "Archive", price: 100, sizes: ["M"] }, categories);
-    expect(row.category_id).toBeNull();
-  });
-
-  it("only ever writes the known condition values", () => {
-    const row = productToRow({ title: "Tee", category: "Sneakers", price: 100, condition: "Mint", sizes: ["M"] }, categories);
-    expect(row.condition).toBe("Excellent");
-  });
-
-  it("round-trips through the database shape", () => {
-    const row = productToRow(
-      { title: "Runner", category: "Sneakers", price: 5200, condition: "Very Good", sizes: ["40"], image: "x.jpg", description: "d" },
-      categories
-    );
-    const back = rowToProduct({ ...row, id: "abc", created_at: "2026-01-01T00:00:00Z", categories: { name: "Sneakers", slug: "sneakers" } });
-    expect(back.title).toBe("Runner");
-    expect(back.price).toBe(5200);
-    expect(back.category).toBe("Sneakers");
-  });
-});
-
 describe("sortCategories", () => {
   it("orders by sort_order and keeps the display names", () => {
     const sorted = sortCategories([
@@ -137,5 +77,11 @@ describe("sortCategories", () => {
   it("ignores empty rows", () => {
     expect(sortCategories([{ id: "1" }, null])).toEqual([]);
     expect(sortCategories(undefined)).toEqual([]);
+  });
+});
+
+describe("the grid query", () => {
+  it("asks for the joined category in one select", () => {
+    expect(PRODUCT_SELECT).toBe("*, categories(name, slug)");
   });
 });

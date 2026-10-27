@@ -5,9 +5,10 @@ Built with **Vite**: editorial Didone typography, the official Gothic **CW** mon
 continuous 3D Y-axis spin, a filterable catalogue, and a WhatsApp-direct order flow with a live
 Nairobi delivery calculator.
 
-**Live backend: Supabase.** The catalogue, product image uploads and every order live in Supabase —
-there is no demo mode and no seeded client-side data. The merchant controls appear once the studio
-passphrase is entered. See [Studio access](#studio-access) for what that gate is and is not worth.
+**Live backend: Supabase.** The catalogue and every order live in Supabase — there is no demo mode
+and no seeded client-side data. The storefront is **strictly read-only**: the browser holds no
+merchant tooling at all and cannot write to the catalogue, because every piece is curated by hand in
+the Supabase Dashboard. See [Managing the catalogue](#managing-the-catalogue).
 
 No UI framework. Vite bundles, hashes assets and runs the dev server; Supabase is the only runtime
 dependency (`@supabase/supabase-js`). Everything else is hand-written HTML, CSS and ES modules.
@@ -30,15 +31,10 @@ editor, then optionally [`supabase/seed.sql`](supabase/seed.sql) for the origina
 clean slate — wipe and rebuild in one paste —
 [`supabase/schema-reset.sql`](supabase/schema-reset.sql). See [Supabase setup](#supabase-setup).
 
-**Studio access** is one passphrase (`creewrld.com`), compared in the browser and remembered in
-`sessionStorage` for the tab. There is no Supabase Auth, no account and no email field.
-
-Adding a piece is **merchant-only**: there is no `+ New piece` control in the public header.
-Click `Login / Admin`, enter the passphrase — the header link then reads `Logout`, a **studio bar**
-appears under the header (`● STUDIO ACTIVE`, the piece count, `+ NEW PIECE`, `LOGOUT`) and every card
-grows `EDIT` / `DELETE` controls. `+ New piece` opens the studio drawer: title, category, price in
-KSh, sizes, condition, description, an `In stock` / `Sold out` switch and an image dropzone.
-`Logout` clears the flag and returns the storefront to shopper view.
+**The shop has no admin panel.** Pieces are added, edited and retired in the Supabase Dashboard
+(*Table Editor → `products`*), and photography is dropped into the `product-images` bucket from the
+same place. The public page only ever reads: it asks for `in_stock = true` rows, renders them, and
+takes orders over WhatsApp.
 
 Requirements: Node **20.19+**. The e2e suite additionally needs a local Chrome/Chromium — see
 [Verification](#verification).
@@ -99,16 +95,14 @@ instead of rendering an empty shop:
    re-applies every policy, grant, bucket and the Realtime publication. It deletes every product and
    every order, so only run it when that is what you want (or on a throwaway project), then run
    `seed.sql` if you want the starter pieces back.
-2. **Allow anonymous writes.** The studio is unlocked with a passphrase in the browser, so the page
-   has no Supabase session to write with. Run
-   [`supabase/studio-access.sql`](supabase/studio-access.sql) once to grant the anonymous role the
-   catalogue writes it now needs. **Read the warning at the top of that file first** — it trades
-   database-enforced access for a browser-side gate. `schema.sql` already contains the same policies
-   for a fresh project.
+2. **Keep the storefront read-only.** The anon key ships in the bundle, so the anonymous role should
+   only be able to `select` the catalogue and `insert` an order. `schema.sql` and
+   [`supabase/read-only-catalogue.sql`](supabase/read-only-catalogue.sql) revoke everything else on
+   `products`, `categories` and the storage bucket; the Dashboard uses the service role, so curating
+   pieces by hand is unaffected.
 3. **Publish the starter catalogue (optional).** Run [`supabase/seed.sql`](supabase/seed.sql) on a
    fresh database to insert the original ten pieces with their bundled photographs. It is a no-op
-   once any product exists. You can also do this from the storefront: sign in with an empty
-   catalogue and the studio bar offers **Load starter catalogue**.
+   once any product exists.
 4. **Check Realtime (optional).** *Database → Replication* — the `products` table is added to the
    publication by the schema. If Realtime is off the storefront still refreshes when the tab
    regains focus.
@@ -120,81 +114,62 @@ Three tables, no views, no functions beyond the `updated_at` trigger:
 | table | columns |
 | --- | --- |
 | `categories` | `id` uuid, `name` text unique, `slug` text unique, `sort_order` int, `created_at` |
-| `products` | `id` uuid, `title` text, `description` text, `price` numeric(12,2) in KSh, `image_url` text, `category_id` uuid → `categories(id) on delete set null`, `in_stock` bool default true, `created_at`, plus `condition`, `sizes` and `updated_at` which the storefront and studio read |
+| `products` | `id` uuid, `title` text, `description` text, `price` numeric(12,2) in KSh, `image_url` text, `category_id` uuid → `categories(id) on delete set null`, `in_stock` bool default true, `created_at`, plus `condition`, `sizes` and `updated_at` which the storefront reads |
 | `orders` | `id` uuid, `customer_name`, `customer_phone`, `delivery_area`, `items` jsonb (array), `total_price` numeric, `status` text default `pending`, `created_at`, plus the delivery breakdown (`zone`, `zone_label`, `zone_fee`, `subtotal`, `item_count`, `source`) |
 
-`in_stock = false` is what the studio calls **sold out**: the piece keeps its place on the grid,
-marked and unorderable. `price` is stored in whole Kenyan shillings and formatted as `KSh 6,500` in
-the UI.
+`in_stock` is the owner's on/off switch. The grid query asks for `in_stock = true` only, so a piece
+switched off in the Dashboard disappears from the shop completely — it is not rendered as a
+"sold out" card. `price` is stored in whole Kenyan shillings and formatted as `KSh 6,500` in the UI.
 
-### Studio access
+### Managing the catalogue
 
-The passphrase is `creewrld.com`, compared in the browser (`src/data/studio.js`) after trimming and
-folding case, and remembered in `sessionStorage` under the key `isAdmin`.
+Everything happens in the Supabase Dashboard. Nothing below needs a redeploy — the page re-reads the
+catalogue on load, on tab focus, and through Realtime.
 
-| Behaviour | Why |
+**Add a piece** — *Table Editor → `products` → Insert row*:
+
+| Column | What to put there |
 | --- | --- |
-| Survives a reload | `sessionStorage` outlives navigation in the same tab |
-| Does **not** survive a new tab or a browser restart | `sessionStorage` is per-tab by design — closing the tab ends the studio session |
-| `Logout` clears it immediately | `sessionStorage.removeItem("isAdmin")`, controls hidden, header back to `LOGIN / ADMIN` |
-| Nothing written to `localStorage` | so a shared device does not keep admin around |
+| `title` | the name shown on the card |
+| `price` | a whole number of KSh (no commas, no `KSh`) |
+| `category_id` | pick one of the four `categories` rows (`Sneakers`, `Streetwear`, `Old Money`, `Y2K`) |
+| `condition` | one of `New`, `Like New`, `Excellent`, `Very Good`, `Good` — anything else renders as `Excellent` |
+| `sizes` | a text array, e.g. `{"41","42","43"}`; empty falls back to `One size` |
+| `image_url` | either `assets/img/<file>.jpg` for bundled photography, or the public URL of an object in the `product-images` bucket |
+| `description` | optional; the quick view falls back to a stock line when it is empty |
+| `in_stock` | `true` to sell it. `false` removes it from the shop entirely |
 
-**What this gate is worth.** The expected passphrase is inside the JavaScript bundle, and
-administration runs with the public anon key. Anyone who reads the bundle can find it. So:
+**Photography.** Upload the file to *Storage → `product-images`* (public bucket, 6 MB cap, JPEG / PNG
+/ WebP / AVIF), copy the public URL and paste it into `image_url`. The bucket is write-protected for
+the anonymous role, so uploads happen in the Dashboard, never from the browser.
 
-- it keeps visitors out of the merchant controls, and it is genuinely enough for a shop where the
-  catalogue is not a secret;
-- it is **not** a security boundary. With `studio-access.sql` applied, anyone holding the anon key
-  (which ships in the bundle) can also write the catalogue directly, without the passphrase at all.
+**Retire a piece.** Set `in_stock = false` to hide it without losing the row, or delete the row to
+remove it for good. Both take effect on the next page load.
 
-If that is unacceptable, do not run `studio-access.sql`: keep the original `to authenticated`
-policies from `schema.sql` and use a real Supabase Auth session (the shape this project had before
-commit `d821995`). That is the only arrangement where the database itself decides who may write.
+**Change the categories.** Edit the `categories` table; `sort_order` decides the tab order. A tab is
+only rendered when the table has a row for it.
 
-The passphrase can be changed in one place — `STUDIO_PASSPHRASE` in `src/data/studio.js` — and the
-site must be redeployed for it to take effect.
+### When a piece does not reach the grid
 
-### When the merchant controls do not appear
-
-`applyAdminState()` reads `sessionStorage.isAdmin` and is the only thing that shows or hides merchant
-surfaces. It runs on `DOMContentLoaded`, after the passphrase is accepted, after a logout, and after
-every grid render — so the DOM cannot drift from storage. If the controls are still missing, the
-browser console answers it in one line:
-
-```js
-creewrldStudio()
-// { isAdmin: true, sessionFlag: "true", headerLabel: "Logout",
-//   studioBarVisible: true, drawerOpen: false, cardControls: 5 }
-```
-
-| Reading | Meaning |
-| --- | --- |
-| `isAdmin: true`, `studioBarVisible: true`, `cardControls: > 0` | The UI is correct — if you cannot see them, you are looking at a **cached or stale deployment**. Hard-reload, and check which commit the deployment was built from. |
-| `isAdmin: false` while the modal said it unlocked | `sessionStorage` is blocked (private mode, a locked-down iframe). The unlock lasts until reload; open the site in a normal tab. |
-| `sessionFlag: "true"` but `isAdmin: false` | Something cleared session state after boot — reload and check again. |
-| `cardControls: 0` | No products rendered, so there are no cards to attach buttons to. See the data notice on the page. |
-
-### When a published piece does not reach the grid
-
-A publish is only half the story — the row has to be readable afterwards. Both halves need the
-policies from [`supabase/studio-access.sql`](supabase/studio-access.sql):
-
-1. **The write is refused.** The toast reads *"Failed to publish piece to database. Ensure database
-   RLS policies permit public inserts."* → that file has not been run against this project.
-2. **The write lands but the grid stays empty.** The follow-up `select` is what repopulates the grid;
-   if it fails you get *"Saved, but the grid couldn't refresh."* Check the read policy on `products`.
-3. **Other visitors.** The merchant's own tab re-reads the catalogue immediately after a write. A
-   different browser picks the piece up through Realtime (the `products` table must be in the
-   `supabase_realtime` publication) or when the tab regains focus, whichever happens first.
+1. **Check `in_stock`.** A row with `in_stock = false` (or `null`) is filtered out of the query on
+   purpose — that is the switch that hides it.
+2. **Check the read policy.** The storefront reads with the anon key. If `select` on `products` is
+   missing, the page shows *"Couldn't load the collection."* under the filters.
+3. **Check the deployment's project.** Supabase is baked into the bundle at build time, so a
+   deployment pointed at a different project shows that project's catalogue. Run
+   `creewrldConfig()` in the console — it prints the project ref the bundle is using.
+4. **Give Realtime a moment.** Without the `products` table in the `supabase_realtime` publication
+   (or with `VITE_SUPABASE_REALTIME=off`) an open tab picks the change up on its next focus or
+   reload.
 
 ### Data model
 
 | Table | Purpose | Who can read | Who can write |
 | --- | --- | --- | --- |
-| `categories` | the four tabs (`Sneakers`, `Streetwear`, `Old Money`, `Y2K`) | everyone | signed-in merchant |
-| `products` | the catalogue, with `category_id` FK and `image_url` | everyone | signed-in merchant |
-| `orders` | a log of every checkout, plus the WhatsApp hand-off | signed-in merchant | anyone may **insert** |
-| `product-images` (bucket) | uploaded product photography | everyone | signed-in merchant |
+| `categories` | the four tabs (`Sneakers`, `Streetwear`, `Old Money`, `Y2K`) | everyone | Dashboard (service role) only |
+| `products` | the catalogue, with `category_id` FK and `image_url` | everyone, `in_stock = true` is all the shop asks for | Dashboard (service role) only |
+| `orders` | a log of every checkout, plus the WhatsApp hand-off | Dashboard (service role) only | anyone may **insert** |
+| `product-images` (bucket) | product photography | everyone | Dashboard (service role) only |
 
 `products.price` is an integer in **KSh**, `sizes` is a `text[]`, and `condition` is constrained to
 the five tags the UI offers. `orders.items` is a JSON snapshot of the lines at the moment of
@@ -229,13 +204,11 @@ src/
   main.js                   entry: imports CSS + boots the app
   app.js                    composition root: state → views → events
   config.js                 store settings, delivery zones, storage keys
-  catalog.js                starter catalogue (seed.sql) + hero lookbook
+  catalog.js                the bundled hero lookbook
   store.js                  state + Supabase orchestration (single source of truth)
   data/                     the only modules that talk to the backend
-    products.js             fetch / insert / update / delete / realtime
-    studio.js               the passphrase check + the sessionStorage flag
+    products.js             catalogue read + realtime (read-only)
     orders.js               order insert
-    storage.js              image upload → product-images bucket
   lib/
     supabase.js             client, build-time env, timeout + error translation
     products.js             row ⇄ app-shape mapping (pure, unit-tested)
@@ -245,7 +218,7 @@ src/
     images.js               maps stored image paths → hashed Vite URLs
   ui/
     header.js  hero.js  grid.js  cart.js  quickview.js
-    order.js   admin.js layers.js reveal.js
+    order.js   layers.js  reveal.js
   styles/main.css           the full design system
   assets/
     fonts/*.woff2           self-hosted Bodoni Moda, Playfair, Inter, JetBrains Mono
@@ -253,11 +226,11 @@ src/
 supabase/
   schema.sql                tables, RLS, bucket, trigger — run this first, safe to re-run
   schema-reset.sql          DESTRUCTIVE: wipe + rebuild everything in one paste
-  studio-access.sql         grants anonymous writes for the passphrase gate — read the warning
+  read-only-catalogue.sql   revokes catalogue/bucket writes from the anonymous role
   seed.sql                  the original ten pieces (fresh database only)
 tests/
-  unit/*.test.js            Vitest (77 assertions)
-  e2e.mjs                   Puppeteer + axe-core against the production build (228 checks)
+  unit/*.test.js            Vitest (72 assertions)
+  e2e.mjs                   Puppeteer + axe-core against the production build (136 checks)
   supabase-stub.mjs         in-process fake Supabase the e2e suite talks to
 ```
 
@@ -292,10 +265,10 @@ and behind the sandbox preview host without a rebuild.
 **Dev server.** `host: true` binds `0.0.0.0`, and `allowedHosts: true` + `cors: true` let the
 proxied preview origin load modules and hot updates.
 
-**Modules.** `window.CREE_SEED` and the two-script global pattern are gone. `catalog.js` exports
-`SEED` (used by `supabase/seed.sql`) and `HERO_SLIDES`; `store.js` owns state; `data/` owns the
-backend; `lib/` holds pure functions; `ui/` holds DOM renderers. `app.js` wires them together and
-`store.subscribe()` keeps views in sync.
+**Modules.** `window.CREE_SEED` and the two-script global pattern are gone. `catalog.js` exports the
+bundled `HERO_SLIDES` lookbook; `store.js` owns state; `data/` owns the backend; `lib/` holds pure
+functions; `ui/` holds DOM renderers. `app.js` wires them together and `store.subscribe()` keeps
+views in sync.
 
 **Environment.** `vite.config.js` resolves the Supabase variables (see
 [Configuration](#configuration)) and passes them through `define`, because a Vite bundle cannot read
@@ -310,21 +283,15 @@ network. Views never query the database — they render `state` and subscribe to
 
 | Flow | Call |
 | --- | --- |
-| Boot | `products.select("*, categories(name, slug)")` + `categories.select(...)` |
+| Boot | `products.select("*, categories(name, slug)").eq("in_stock", true)` + `categories.select(...)` |
 | Category tab | filtered in memory from the live catalogue, counts included |
-| Studio unlock | passphrase compared in `data/studio.js` → `sessionStorage.isAdmin` |
-| Session | `restoreStudio()` on boot reads that flag → `state.admin` |
-| Add / edit | `products.insert()` / `products.update().eq("id", …)` |
-| After a write | the drawer closes, then `refreshCatalogue()` re-reads `products` + `categories` |
-| Delete | `products.delete().eq("id", …)` |
-| Image upload | `storage.from("product-images").upload()` → `getPublicUrl()` → `image_url` |
 | Checkout | `orders.insert([...])`, then the WhatsApp hand-off |
 | Live updates | realtime `postgres_changes` on `products`, plus a refetch on tab focus |
 
-**The merchant gate is server-side.** `state.admin` only hides UI: every write is also checked by
-row level security, so a shopper who flips the flag in DevTools gets a `403` from Postgres, not an
-edit. The e2e suite asserts exactly that — it forces a rejected write and confirms the piece is not
-inserted and the form stays open with a readable message.
+That is the whole surface: two reads and one insert. There is no write, no upload, no session and no
+admin state anywhere in `src/` — the e2e suite asserts that every request the shopper session makes
+is a `GET` (plus the order `POST`), that no merchant chrome exists in the DOM, and that nothing
+`isAdmin`-shaped is written to `sessionStorage` or `localStorage`.
 
 **Ordering is deliberate.** The order is inserted *before* WhatsApp opens, so the studio keeps a
 record even if the chat is never sent. A logging failure never blocks the sale: the WhatsApp tab
@@ -433,38 +400,31 @@ down when the header condenses on scroll, and again at the mobile breakpoints.
 `npm test` runs three layers, and the e2e layer targets the **built** output (`vite preview` on
 `dist/`), not the dev server:
 
-**Unit (Vitest, 75 assertions)** — row ⇄ app mapping (including `category_id` resolution and
-category sorting), currency formatting, HTML escaping, size parsing, delivery zone fees, customer
-validation, the exact WhatsApp payload, cart maths and quantity caps, cart reconciliation against a
-changed catalogue, the passphrase comparison and its storage flag (including blocked storage), and a
-rejected write surfacing instead of "saving".
+**Unit (Vitest, 72 assertions)** — row → app mapping (including the category join and category
+sorting), the exact `PRODUCT_SELECT` the grid asks for, currency formatting, HTML escaping, size
+parsing, delivery zone fees, customer validation, the exact WhatsApp payload, cart maths and quantity
+caps, and cart reconciliation against a changed catalogue.
 
-**E2E (228 checks)** — a real Chromium session against `dist/`:
+**E2E (136 checks)** — a real Chromium session against `dist/`:
 
 - *Build integrity*: content-hashed JS/CSS, two font preloads pointing at hashed `.woff2` files
   that return `200 font/woff2`, all three typefaces loaded via `document.fonts`, product photos
   served from hashed URLs and decoded, official brand artwork resolving from `public/`, and **no
   Add Product button in the shopper header**.
 - *Live data*: the grid renders exactly what the database returns, tabs and counts come from the
-  `categories` table, and no catalogue or session key is written to `localStorage`.
-- *Studio access*: a wrong passphrase is refused in red without touching the network and leaves the
-  shopper view intact; the correct one — typed with stray spaces and odd case — reveals the studio
-  bar, writes `sessionStorage.isAdmin`, and survives a reload; `Logout` reverses all of it. A
-  second tab starts locked, and no `/auth/v1/*` request is ever made.
-- *Merchant writes*: insert (with the category resolved to its FK, the price as an integer and the
-  sizes as an array), a `PATCH` scoped to one row, and a `DELETE` scoped to one row — each asserted
-  against the row the fake backend actually stored.
-- *Studio drawer*: the four database categories, a stock switch that flips between `In stock` and
-  `Sold out`, and a dropzone that accepts a **dragged** file as readily as a browsed one — the drop
-  previews the thumbnail before anything is uploaded. A sold-out piece keeps its place on the grid,
-  marked and unorderable, and comes back on sale when the switch is flipped again.
-- *Storage*: the chosen file is uploaded to `product-images` under a slug + random suffix, and the
-  `image_url` saved on the row is the Supabase public URL (not a local file path).
+  `categories` table, and no catalogue key is written to `localStorage`.
+- *Read-only storefront*: no studio bar, drawer, login modal, passphrase input, `+ NEW PIECE`,
+  `EDIT` / `DELETE` control or merchant footer link exists in the document; `window.creewrldStudio`
+  is gone; nothing `isAdmin`-shaped sits in `sessionStorage` or `localStorage`; the grid request is
+  exactly `select=*, categories(name, slug)` + `in_stock=eq.true`; and the shopper session issues no
+  request other than that read and the order insert.
+- *Hidden pieces*: a row with `in_stock = false` is not fetched, so it is absent from the grid and
+  from the counts — no "sold out" card, no disabled button.
 - *Orders*: the row is inserted before WhatsApp opens, with the customer details, the money in KSh,
   the zone, and a JSON snapshot of the lines; the WhatsApp tab is claimed inside the click gesture
   and navigated afterwards, so it survives pop-up blockers.
-- *Resilience*: an empty table offers the starter catalogue and seeds ten pieces; a write rejected
-  by RLS keeps the form open and inserts nothing; an unreachable backend raises the data notice.
+- *Resilience*: an empty table shows the shopper empty state and offers no seeding control; an
+  unreachable backend raises the data notice.
 - *Behaviour*: the live grid and its counts, category tabs, order modal validation, the decoded
   `wa.me/254719526649` payload (title, price, size, condition, absolute hashed image link, customer,
   free-delivery note), the delivery calculator (Free / KSh 200 / KSh 450), quantity steppers, a
@@ -475,8 +435,8 @@ rejected write surfacing instead of "saving".
 - *Typography & contrast*: the four roles above are asserted against computed styles (exact size,
   weight, tracking and hex), every reading colour is checked for ≥4.5:1 contrast against its actual
   painted background, and no element carrying reading text may render below 11px.
-- *Accessibility*: axe-core — zero violations on the home page, cart drawer, order modal and login
-  modal.
+- *Accessibility*: axe-core — zero violations on the home page, cart drawer, order modal and quick
+  view.
 - *Layout*: no horizontal overflow at 320/360/390/414/560/768/834/1024/1180/1280/1440/1920 px, with
   the 2/3/4-column grid breakpoints asserted.
 - *Hygiene*: no console errors, no uncaught page errors, no 404s or failed requests.
@@ -516,12 +476,13 @@ The dev server runs with `host: true` on `0.0.0.0`, so it also works behind a pr
 
 ## Production notes
 
-1. **Access is a convenience lock, not a security boundary.** The passphrase ships in the bundle and
-   the write policies grant the anonymous role. Changing `STUDIO_PASSPHRASE` and redeploying keeps
-   casual visitors out; it does not stop anyone who reads the JavaScript. If the catalogue needs real
-   protection, put Supabase Auth back and restore the `to authenticated` policies.
-2. **The `studio-access.sql` grants are the decision worth revisiting.** Everything else about the
-   passphrase is cosmetic; that file is what actually permits writes from an anonymous browser.
+1. **The browser cannot write the catalogue.** There is no merchant UI, no upload path and no
+   session in the bundle; every piece is curated in the Supabase Dashboard. Keep it that way — an
+   anon key ships in the bundle, so the only thing standing between a visitor and your `products`
+   table is row level security.
+2. **Keep the anon grants minimal.** `schema.sql` grants `select` on `products` / `categories` and
+   `insert` on `orders`, and nothing else. If you ever restore wider grants for an experiment, run
+   [`supabase/read-only-catalogue.sql`](supabase/read-only-catalogue.sql) to take them back.
 3. **The anon key is public by design.** It is in the bundle. Protect data with RLS, and keep the
    `service_role` key out of this repo and out of Vercel's client-side variables.
 4. **Images** are stored in the public `product-images` bucket, capped at 6 MB and four MIME types

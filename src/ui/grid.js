@@ -5,14 +5,7 @@
 
 import { $, $$, esc, money } from "../lib/format.js";
 import { resolveImage } from "../lib/images.js";
-import {
-  categoryTabs,
-  countFor,
-  getProduct,
-  setFilter,
-  state,
-  visibleProducts
-} from "../store.js";
+import { categoryTabs, countFor, setFilter, state, visibleProducts } from "../store.js";
 
 export function renderFilters() {
   const rail = $("#filters");
@@ -36,27 +29,13 @@ export function renderFilters() {
 
 export function cardMarkup(product, index) {
   const delay = Math.min(index * 45, 360);
-  const soldOut = product.inStock === false;
   return (
-    '<article class="card' + (soldOut ? " is-sold-out" : "") + '" data-id="' + esc(product.id) +
+    '<article class="card" data-id="' + esc(product.id) +
       '" style="animation-delay:' + delay + 'ms">' +
       '<div class="card__media">' +
         '<img src="' + esc(resolveImage(product.image)) + '" alt="' + esc(product.title) + '"' +
           ' loading="lazy" width="900" height="1125" />' +
-        '<span class="card__badge' + (soldOut ? " card__badge--out" : "") + '">' +
-          esc(soldOut ? "Sold out" : product.condition) + "</span>" +
-        // Studio controls. The labels are hidden on narrow screens, where the
-        // icons alone are clearer than two words over a photograph.
-        '<div class="card__admin">' +
-          '<button type="button" class="icon-btn" data-edit="' + esc(product.id) + '"' +
-            ' aria-label="Edit ' + esc(product.title) + '" title="Edit">' +
-            '<svg class="ico" aria-hidden="true"><use href="#i-edit"/></svg>' +
-            "<span>Edit</span></button>" +
-          '<button type="button" class="icon-btn icon-btn--del" data-delete="' + esc(product.id) + '"' +
-            ' aria-label="Delete ' + esc(product.title) + '" title="Delete">' +
-            '<svg class="ico" aria-hidden="true"><use href="#i-trash"/></svg>' +
-            "<span>Delete</span></button>" +
-        "</div>" +
+        '<span class="card__badge">' + esc(product.condition) + "</span>" +
         '<button type="button" class="card__quick" data-quick="' + esc(product.id) + '">Quick view</button>' +
       "</div>" +
       '<div class="card__body">' +
@@ -68,9 +47,8 @@ export function cardMarkup(product, index) {
           '<span class="card__sizes">' + esc(product.sizes.join(" · ")) + "</span>" +
           '<span class="card__cat">' + esc(product.category) + "</span>" +
         "</div>" +
-        '<button type="button" class="card__order" data-order="' + esc(product.id) + '"' +
-          (soldOut ? ' disabled aria-disabled="true"' : "") + ">" +
-          "<span>" + (soldOut ? "Sold out" : "Order") + "</span>" +
+        '<button type="button" class="card__order" data-order="' + esc(product.id) + '">' +
+          "<span>Order</span>" +
           '<svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg>' +
         "</button>" +
       "</div>" +
@@ -93,12 +71,10 @@ export function renderGrid() {
   // Tailor the empty copy: an empty shop reads differently from an empty tab.
   const emptyText = $("#emptyText");
   if (emptyText && items.length === 0) {
-    const wholesale = state.filter === "All Items";
-    emptyText.textContent = wholesale
-      ? state.admin
-        ? "The catalogue is empty. Use + New product above to publish the first piece."
-        : "The collection is being restocked. New drops arrive weekly — message the studio and we'll send what's landed."
-      : "No pieces land in this category right now. New drops arrive weekly — check back soon, or message the studio on WhatsApp.";
+    emptyText.textContent =
+      state.filter === "All Items"
+        ? "The collection is being restocked. New drops arrive weekly — message the studio and we'll send what's landed."
+        : "No pieces land in this category right now. New drops arrive weekly — check back soon, or message the studio on WhatsApp.";
   }
 
   // restart the staggered entrance animation on every render
@@ -136,9 +112,7 @@ export function selectCategory(category, options = {}) {
   }
 }
 
-/**
- * handlers: { onOrder(id), onQuick(id), onEdit(product), onDelete(product) }
- */
+/** handlers: { onOrder(id), onQuick(id) } */
 export function bindGrid(handlers) {
   const filters = $("#filters");
   const grid = $("#productGrid");
@@ -168,11 +142,5 @@ export function bindGrid(handlers) {
 
     const quick = event.target.closest("[data-quick]");
     if (quick) return handlers.onQuick(quick.dataset.quick);
-
-    const edit = event.target.closest("[data-edit]");
-    if (edit) return handlers.onEdit(getProduct(edit.dataset.edit));
-
-    const remove = event.target.closest("[data-delete]");
-    if (remove) return handlers.onDelete(getProduct(remove.dataset.delete));
   });
 }

@@ -55,7 +55,7 @@ export function openLayer(layer, focusTarget) {
   window.setTimeout(() => {
     if (!layer.classList.contains("is-open")) return;
     if (target && typeof target.focus === "function") target.focus({ preventScroll: true });
-    const panel = layer.querySelector(".modal__panel, .studio") || layer;
+    const panel = layer.querySelector(".modal__panel") || layer;
     if (panel && panel.scrollTop) panel.scrollTop = 0;
   }, 90);
 }
@@ -138,7 +138,7 @@ export function bindDismissibles(root = document) {
   root.addEventListener("click", (event) => {
     const dismiss = event.target.closest("[data-close]");
     if (!dismiss) return;
-    const layer = dismiss.closest(".modal, .drawer, .drawer-layer");
+    const layer = dismiss.closest(".modal, .drawer");
     if (layer) closeLayer(layer);
   });
 }

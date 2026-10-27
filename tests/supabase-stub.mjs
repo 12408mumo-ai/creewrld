@@ -4,17 +4,19 @@
  * The app under test is the real production build with the real
  * @supabase/supabase-js client: no mock code ships in the bundle. This module
  * intercepts the HTTP traffic that client would send to Supabase and answers it
- * with a small stateful dataset, so the suite verifies the actual query shapes,
- * payloads and auth flow.
+ * with a small stateful dataset, so the suite verifies the actual query shapes
+ * and payloads.
+ *
+ * The storefront is read-only, so the stub mirrors exactly what the deployed
+ * policies allow the anonymous role: reads on `products` and `categories`, and
+ * inserts on `orders`. Catalogue writes are answered 403, as they would be in
+ * production if anything tried them.
  *
  * Endpoints covered:
- *   POST   /auth/v1/token?grant_type=password|refresh_token
- *   GET    /auth/v1/user            POST /auth/v1/logout
- *   GET    /rest/v1/products        POST /rest/v1/products
- *   PATCH  /rest/v1/products        DELETE /rest/v1/products
+ *   GET    /rest/v1/products
  *   GET    /rest/v1/categories
- *   POST   /rest/v1/orders          GET /rest/v1/orders
- *   POST   /storage/v1/object/product-images/<path>
+ *   POST   /rest/v1/orders
+ *   GET    /storage/v1/object/public/product-images/<path>
  */
 
 export const STUB_ORIGIN = "https://stub.supabase.co";
@@ -106,12 +108,7 @@ const json = (body, status = 200) => ({
 
 const uuid = () => crypto.randomUUID();
 
-/**
- * @param {object} options
- * @param {string} options.email     merchant email that exists
- * @param {string} options.password  its password
- */
-export function createSupabaseStub({ email = "owner@creewrld.test", password = "creewrld" } = {}) {
+export function createSupabaseStub() {
   /**
    * Rows as the database would hand them back: the seed fixture omits the
    * columns it does not care about, and `in_stock` defaults to true there just
@@ -122,23 +119,16 @@ export function createSupabaseStub({ email = "owner@creewrld.test", password = "
   const state = {
     products: freshRows(),
     orders: [],
-    uploads: [],
     /** Every request the client made, for assertions. */
     calls: [],
-    /** When set, the next write fails with this message. */
-    failNextWrite: null,
     /** When true, pretend the whole backend is unreachable. */
-    offline: false,
-    token: null,
-    signedIn: false
+    offline: false
   };
 
   const withCategory = (row) => ({
     ...row,
     categories: CATEGORY_ROWS.find((c) => c.id === row.category_id) || null
   });
-
-  const user = () => ({ id: "u-owner", aud: "authenticated", role: "authenticated", email });
 
   const parseFilters = (url) => {
     const filters = [];
@@ -155,72 +145,6 @@ export function createSupabaseStub({ email = "owner@creewrld.test", password = "
       (acc, [column, value]) => acc.filter((row) => String(row[column]) === String(value)),
       rows
     );
-
-  function handleAuth(request, url, method, body) {
-    if (url.pathname === "/auth/v1/token") {
-      const grant = url.searchParams.get("grant_type");
-      if (grant === "password") {
-        const { email: givenEmail, password: givenPassword } = body || {};
-        const given = String(givenEmail).trim().toLowerCase();
-
-        // A second kind of refusal, so the UI's mapping can be tested: the
-        // account exists but was never confirmed. Supabase answers 400 with
-        // code "email_not_confirmed" and this manager-owned test account.
-        if (given === "unconfirmed@creewrld.test") {
-          return json(
-            {
-              code: "email_not_confirmed",
-              error: "email_not_confirmed",
-              error_description: "Email not confirmed",
-              msg: "Email not confirmed"
-            },
-            400
-          );
-        }
-
-        if (given !== email.toLowerCase() || givenPassword !== password) {
-          return json({ error: "invalid_grant", error_description: "Invalid login credentials", msg: "Invalid login credentials" }, 400);
-        }
-        state.signedIn = true;
-        state.token = "stub-access-token";
-        return json({
-          access_token: state.token,
-          token_type: "bearer",
-          expires_in: 3600,
-          expires_at: Math.floor(Date.now() / 1000) + 3600,
-          refresh_token: "stub-refresh-token",
-          user: user()
-        });
-      }
-      if (grant === "refresh_token") {
-        return json({
-          access_token: "stub-access-token",
-          token_type: "bearer",
-          expires_in: 3600,
-          expires_at: Math.floor(Date.now() / 1000) + 3600,
-          refresh_token: "stub-refresh-token",
-          user: user()
-        });
-      }
-    }
-
-    if (url.pathname === "/auth/v1/user" && method === "GET") {
-      if (!state.signedIn) return json({ message: "JWT expired" }, 401);
-      return json(user());
-    }
-
-    if (url.pathname === "/auth/v1/logout") {
-      state.signedIn = false;
-      state.token = null;
-      return { status: 204, headers: CORS, body: "" };
-    }
-
-    if (url.pathname === "/auth/v1/settings") {
-      return json({ external: {}, disable_signup: true, mailer_autoconfirm: false });
-    }
-
-    return null;
-  }
 
   function handleRest(request, url, method, body) {
     const table = url.pathname.replace("/rest/v1/", "");
@@ -244,43 +168,13 @@ export function createSupabaseStub({ email = "owner@creewrld.test", password = "
         return json(rows);
       }
 
-      // Writes no longer require a session: the shipped policies grant the
-      // anonymous role access to the catalogue (supabase/studio-access.sql),
-      // because the studio is unlocked with a passphrase in the browser.
-      if (state.failNextWrite) {
-        const message = state.failNextWrite;
-        state.failNextWrite = null;
-        return json({ code: "42501", message }, 403);
-      }
-
-      if (method === "POST") {
-        const batch = Array.isArray(body) ? body : [body];
-        const created = batch.map((row) => ({
-          id: uuid(),
-          created_at: new Date().toISOString(),
-          ...row
-        }));
-        state.products.unshift(...created);
-        return json(created.map(withCategory), 201);
-      }
-
-      if (method === "PATCH") {
-        const ids = parseFilters(url).filter(([column]) => column === "id").map(([, value]) => value);
-        const updated = [];
-        state.products = state.products.map((row) => {
-          if (!ids.includes(row.id)) return row;
-          const next = { ...row, ...body };
-          updated.push(next);
-          return next;
-        });
-        return json(updated.map(withCategory));
-      }
-
-      if (method === "DELETE") {
-        const ids = parseFilters(url).filter(([column]) => column === "id").map(([, value]) => value);
-        state.products = state.products.filter((row) => !ids.includes(row.id));
-        return { status: 204, headers: CORS, body: "" };
-      }
+      // The catalogue is curated in the Supabase Dashboard: the anonymous role
+      // has no write grant, so the stub refuses catalogue writes exactly as the
+      // deployed policies do.
+      return json(
+        { code: "42501", message: 'permission denied for table products' },
+        403
+      );
     }
 
     if (table === "categories" && method === "GET") {
@@ -307,24 +201,14 @@ export function createSupabaseStub({ email = "owner@creewrld.test", password = "
     return null;
   }
 
-  function handleStorage(request, url, method) {
-    // Public object read — what <img src> hits after a successful upload.
+  function handleStorage(request, url) {
+    // Public object read — what <img src> hits for a row stored in the bucket.
     if (url.pathname.startsWith("/storage/v1/object/public/product-images/")) {
       return {
         status: 200,
         headers: { ...CORS, "content-type": "image/png", "cache-control": "public, max-age=31536000" },
         body: PIXEL
       };
-    }
-
-    if (url.pathname.startsWith("/storage/v1/object/product-images/")) {
-      const path = url.pathname.replace("/storage/v1/object/product-images/", "");
-      if (method === "POST" || method === "PUT") {
-        if (state.failNextWrite) return json({ statusCode: "403", error: "Unauthorized", message: "new row violates row-level security policy" }, 403);
-        state.uploads.push(path);
-        return json({ Key: `product-images/${path}`, Id: uuid() });
-      }
-      return json({});
     }
     return null;
   }
@@ -361,7 +245,6 @@ export function createSupabaseStub({ email = "owner@creewrld.test", password = "
         path: url.pathname,
         query: url.search,
         body,
-        signedIn: state.signedIn,
         // `apikey` is what PostgREST looks for first; `authorization` is what
         // storage and realtime use. Both are recorded so the suite can prove
         // every request left the browser with credentials attached.
@@ -376,9 +259,8 @@ export function createSupabaseStub({ email = "owner@creewrld.test", password = "
       }
 
       let response =
-        handleAuth(request, url, method, body) ||
         handleRest(request, url, method, body) ||
-        handleStorage(request, url, method) ||
+        handleStorage(request, url) ||
         json({ message: "stub: unhandled " + method + " " + url.pathname }, 404);
 
       // `.single()` asks for a single object via content negotiation.
@@ -405,17 +287,12 @@ export function createSupabaseStub({ email = "owner@creewrld.test", password = "
     attach,
     rows: () => state.products,
     orders: () => state.orders,
-    uploads: () => state.uploads,
     calls: () => state.calls,
     reset() {
       state.products = freshRows();
       state.orders = [];
-      state.uploads = [];
       state.calls = [];
-      state.failNextWrite = null;
       state.offline = false;
-      state.signedIn = false;
-      state.token = null;
     }
   };
 }

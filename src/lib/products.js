@@ -1,13 +1,14 @@
 /**
- * Row ⇄ app-shape mapping for the products table.
+ * Row → app-shape mapping for the products table.
  *
  * Pure functions, no network — so the shape the storefront renders is unit
- * tested independently of Supabase.
+ * tested independently of Supabase. Rows are curated in the Supabase Dashboard;
+ * the browser only ever reads them, so there is no matching writer here.
  *
  * products row:
  *   id uuid, title text, category_id uuid, price integer (KSh),
  *   condition text, sizes text[], image_url text, description text,
- *   in_stock boolean (false = sold out), created_at
+ *   in_stock boolean (false hides the piece from the grid), created_at
  * joined as: categories: { name, slug } | null
  */
 
@@ -39,9 +40,9 @@ export function rowToProduct(row) {
     sizes: sizes.length ? sizes : ["One size"],
     image: String(row.image_url || "").trim() || PLACEHOLDER,
     description: String(row.description || "").trim(),
-    // The column is `in_stock`; "sold out" is the merchant-facing name for
-    // false. A missing value, or a row from before the column existed, counts
-    // as in stock.
+    // The column is `in_stock`, the owner's on/off switch in the Dashboard.
+    // The grid query already filters on it, so what renders is always in stock;
+    // a missing value counts as on sale.
     inStock: (row.in_stock ?? row.is_active) !== false,
     addedAt: row.created_at ? Date.parse(row.created_at) || Date.now() : Date.now()
   };
@@ -50,29 +51,6 @@ export function rowToProduct(row) {
 export function rowsToProducts(rows) {
   if (!Array.isArray(rows)) return [];
   return rows.map(rowToProduct).filter(Boolean);
-}
-
-/**
- * App shape → insert/update payload.
- * `categories` is [{ id, name, slug }] so a tab name can be resolved to its FK.
- */
-export function productToRow(product, categories = []) {
-  const name = String(product.category || "").trim();
-  const match =
-    categories.find((category) => category.name === name) ||
-    categories.find((category) => category.slug === name.toLowerCase()) ||
-    null;
-
-  return {
-    title: String(product.title || "").trim(),
-    category_id: product.categoryId || (match ? match.id : null),
-    price: Math.round(Number(product.price)),
-    condition: CONDITIONS.includes(product.condition) ? product.condition : "Excellent",
-    sizes: normalizeSizes(product.sizes),
-    image_url: String(product.image || "").trim(),
-    description: String(product.description || "").trim(),
-    in_stock: product.inStock !== false
-  };
 }
 
 /** Categories arrive from the DB; keep the display order stable and sane. */
