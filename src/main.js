@@ -5,6 +5,7 @@
 
 import "./styles/main.css";
 import { app, boot } from "./app.js";
+import { supabaseConfig } from "./lib/supabase.js";
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", boot);
@@ -20,4 +21,18 @@ if (document.readyState === "loading") {
  */
 if (typeof window !== "undefined") {
   window.creewrldStudio = app.studioState;
+
+  /**
+   * `creewrldConfig()` answers the other half of a broken deployment: which
+   * Supabase project this build points at, whether it has a key, and where that
+   * key came from. A missing key is the cause of the API error
+   * `No API key found in request`, so the fact is one console line away.
+   */
+  window.creewrldConfig = () => ({
+    url: supabaseConfig.url || null,
+    configured: supabaseConfig.configured,
+    source: supabaseConfig.source || null,
+    keyPreview: supabaseConfig.keyPreview || null,
+    issues: supabaseConfig.issues
+  });
 }

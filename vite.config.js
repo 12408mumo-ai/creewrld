@@ -1,4 +1,5 @@
 import { defineConfig, loadEnv } from "vite";
+import { KEY_VARS, URL_VARS, pickEnv, pickKey, pickUrl, resolveSupabaseConfig } from "./src/lib/supabase-env.js";
 
 /**
  * Inject <link rel="preload"> hints for the fonts that paint the first screen.
@@ -58,24 +59,59 @@ function fontPreload(needles) {
  * level security is what protects the data. Never add the service_role key here.
  */
 function supabaseEnv(mode) {
+  // `.env`, `.env.local`, `.env.[mode]` — every file Vite would read — plus the
+  // real process environment, which is where Vercel puts its variables.
   const env = loadEnv(mode, process.cwd(), "");
-  const pick = (...keys) => {
-    for (const key of keys) {
-      const value = (env[key] || process.env[key] || "").trim();
-      if (value) return value;
-    }
-    return "";
-  };
+  const combined = { ...env, ...process.env };
+
+  const resolved = resolveSupabaseConfig([
+    { name: "environment", url: pickUrl(combined), anonKey: pickKey(combined) }
+  ]);
+
+  const realtimeValue = String(pickEnv(combined, ["VITE_SUPABASE_REALTIME", "SUPABASE_REALTIME"])).toLowerCase();
 
   return {
-    url: pick("VITE_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_URL"),
-    anonKey: pick("VITE_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY"),
-    realtime: pick("VITE_SUPABASE_REALTIME", "SUPABASE_REALTIME").toLowerCase() !== "off"
+    url: resolved.url,
+    anonKey: resolved.anonKey,
+    configured: resolved.configured,
+    realtime: realtimeValue !== "off"
   };
 }
 
-export default defineConfig(({ mode }) => {
+/**
+ * A build without credentials ships an app that cannot talk to the database —
+ * every request comes back `No API key found in request`. That is worth saying
+ * out loud at build time, with the exact variable names, rather than leaving it
+ * to be discovered in the browser.
+ */
+function reportSupabase(credentials) {
+  if (credentials.configured) {
+    const preview = credentials.anonKey.slice(0, 12) + "…";
+    console.log("\n  Supabase   " + credentials.url + " · key " + preview + "\n");
+    return;
+  }
+
+  const lines = [
+    "",
+    "  ⚠  Supabase credentials not found — this build cannot reach the database.",
+    "     A URL without a key produces \"No API key found in request\" in the browser.",
+    "",
+    "     Set one of " + URL_VARS.slice(0, 2).join(" / "),
+    "     and one of " + KEY_VARS.slice(0, 3).join(" / "),
+    "     then rebuild. Locally that means .env.local; on Vercel, Project →",
+    "     Settings → Environment Variables (and redeploy afterwards).",
+    ""
+  ];
+  console.warn(lines.join("\n"));
+
+  if (process.env.CI && !process.env.ALLOW_UNCONFIGURED_SUPABASE) {
+    console.warn("  (CI build — continuing anyway; set ALLOW_UNCONFIGURED_SUPABASE=1 to silence this.)\n");
+  }
+}
+
+export default defineConfig(({ command, mode }) => {
   const supabase = supabaseEnv(mode);
+  if (command === "build") reportSupabase(supabase);
 
   return {
   // Relative base keeps the build portable: it works at a domain root, in a
