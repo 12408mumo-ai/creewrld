@@ -1,36 +1,90 @@
 /**
  * Supabase client — the single connection to the live backend.
  *
- * Credentials are injected at build time by `vite.config.js` from the
- * NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY variables that are
- * already configured in Vercel. `typeof` guards mean the module also loads (as
- * "not configured") under Vitest, where the defines do not exist.
+ * Every request the storefront makes (catalogue reads, studio writes, image
+ * uploads, order inserts) goes through this one client, which is what
+ * guarantees the `apikey` header is on all of them. Nothing in `src/` calls
+ * `fetch` against Supabase directly — `grep -rn "fetch(" src/` finds only this
+ * module and the wrapper it installs below.
+ *
+ * Credentials are resolved from the first source that has a usable pair:
+ *
+ *   1. Vite environment — VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY (or the
+ *      NEXT_PUBLIC_* names this project already has in Vercel), read straight
+ *      from `import.meta.env`;
+ *   2. the build-time literals `vite.config.js` injects from the same names;
+ *   3. `window.__CREE_WRLD_SUPABASE__ = { url, anonKey }`, set before this
+ *      module loads — an escape hatch for a deployment whose environment
+ *      variables were missing at build time.
  *
  * The anon key is public by design: every table is protected by row level
- * security (see supabase/schema.sql), never by hiding this key.
+ * security (see supabase/schema.sql), never by hiding this key. Only the
+ * service_role key is secret, and it is never referenced anywhere in `src/`.
  */
 
 import { createClient } from "@supabase/supabase-js";
+import {
+  KEY_VARS,
+  URL_VARS,
+  configErrorFor,
+  createAuthorizedFetch,
+  keyPreview,
+  pickKey,
+  pickUrl,
+  resolveSupabaseConfig
+} from "./supabase-env.js";
 
-const url = typeof __SUPABASE_URL__ !== "undefined" ? __SUPABASE_URL__ : "";
-const anonKey = typeof __SUPABASE_ANON_KEY__ !== "undefined" ? __SUPABASE_ANON_KEY__ : "";
-const realtime = typeof __SUPABASE_REALTIME__ !== "undefined" ? __SUPABASE_REALTIME__ : true;
+const viteEnv = (() => {
+  try {
+    // Inlined by Vite at build time; present under Vitest too.
+    return typeof import.meta !== "undefined" && import.meta.env ? import.meta.env : {};
+  } catch (err) {
+    return {};
+  }
+})();
 
-export const supabaseConfig = {
-  url: String(url || "").replace(/\/+$/, ""),
-  anonKey: String(anonKey || ""),
-  configured: Boolean(url && anonKey)
+const defines = {
+  url: typeof __SUPABASE_URL__ !== "undefined" ? __SUPABASE_URL__ : "",
+  anonKey: typeof __SUPABASE_ANON_KEY__ !== "undefined" ? __SUPABASE_ANON_KEY__ : "",
+  realtime: typeof __SUPABASE_REALTIME__ !== "undefined" ? __SUPABASE_REALTIME__ : true
 };
 
+const runtimeOverride = (() => {
+  try {
+    const injected = typeof window !== "undefined" ? window.__CREE_WRLD_SUPABASE__ : null;
+    return injected && typeof injected === "object" ? injected : {};
+  } catch (err) {
+    return {};
+  }
+})();
+
+const resolved = resolveSupabaseConfig([
+  { name: "Vite env", url: pickUrl(viteEnv), anonKey: pickKey(viteEnv) },
+  { name: "build define", url: defines.url, anonKey: defines.anonKey },
+  { name: "window.__CREE_WRLD_SUPABASE__", url: runtimeOverride.url, anonKey: runtimeOverride.anonKey }
+]);
+
+export const supabaseConfig = {
+  url: resolved.url,
+  anonKey: resolved.anonKey,
+  configured: resolved.configured,
+  /** Where the credentials came from — "Vite env", "build define", … */
+  source: resolved.source,
+  /** A short, safe fingerprint of the key, for the diagnostics table. */
+  keyPreview: keyPreview(resolved.anonKey),
+  /** Why any earlier source was rejected, e.g. "build define: key is missing". */
+  issues: resolved.issues
+};
+
+const realtime = String(defines.realtime) !== "false";
 export const REALTIME_ENABLED = Boolean(realtime);
 
-export const CONFIG_ERROR =
-  "Supabase is not configured — set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.";
+export const CONFIG_ERROR = configErrorFor(resolved);
 
 /**
- * The client, or null when the build has no credentials. Callers must check
- * `assertConfigured()` before querying so the failure is a readable message
- * rather than a network error against an empty URL.
+ * The client, or null when the build has no usable credentials. Callers check
+ * `assertConfigured()` first, so the failure is a readable sentence rather than
+ * a network round-trip against an empty URL.
  */
 export const supabase = supabaseConfig.configured
   ? createClient(supabaseConfig.url, supabaseConfig.anonKey, {
@@ -44,11 +98,47 @@ export const supabase = supabaseConfig.configured
         detectSessionInUrl: false
       },
       global: {
-        headers: { "x-application-name": "cree-wrld-storefront" }
+        headers: {
+          apikey: supabaseConfig.anonKey,
+          Authorization: "Bearer " + supabaseConfig.anonKey,
+          "x-application-name": "cree-wrld-storefront"
+        },
+        // Belt and braces: even if a future version of supabase-js stopped
+        // setting the header, this wrapper puts it back on every request. It
+        // also refuses to send a request that would be answered with
+        // `No API key found in request`.
+        fetch: createAuthorizedFetch(
+          (...args) => (typeof fetch === "function" ? fetch(...args) : Promise.reject(new Error("fetch is unavailable"))),
+          () => supabaseConfig.anonKey
+        )
       },
       realtime: REALTIME_ENABLED ? undefined : { params: { eventsPerSecond: 0 } }
     })
   : null;
+
+// Say out loud what the build decided. A deployment with a URL but no key is
+// the exact shape that produces `No API key found in request`, and it is worth
+// one console line rather than an afternoon.
+if (typeof console !== "undefined") {
+  if (supabaseConfig.configured) {
+    console.info(
+      "[creewrld] Supabase client ready — " +
+        supabaseConfig.url +
+        " · key " +
+        supabaseConfig.keyPreview +
+        " (from " +
+        supabaseConfig.source +
+        ")"
+    );
+  } else {
+    console.error(
+      "[creewrld] " +
+        CONFIG_ERROR +
+        (supabaseConfig.issues.length ? "\n  checked: " + supabaseConfig.issues.join("; ") : "") +
+        "\n  set " + URL_VARS[0] + " and " + KEY_VARS[0] + " (or the NEXT_PUBLIC_ equivalents)."
+    );
+  }
+}
 
 /**
  * Tokens left behind by the Supabase Auth era. The app no longer reads them,
@@ -96,14 +186,17 @@ export function describeError(error, fallback = "Something went wrong. Please tr
   const message = String(error.message || error.error_description || error.hint || "").trim();
   if (!message) return fallback;
 
+  // The gateway refusing the request before it reaches the database.
+  if (/no api key found|missing api key|invalid api key|jwt.*(invalid|malformed)/i.test(message)) {
+    return "The Supabase anon key is missing or wrong in this build. Set " +
+      KEY_VARS[0] + " (or NEXT_PUBLIC_SUPABASE_ANON_KEY) and redeploy.";
+  }
+
   // Postgres / PostgREST vocabulary leaked to the storefront.
   if (/relation .* does not exist|schema cache/i.test(message)) {
     return "The database tables are missing — run supabase/schema.sql in the SQL editor.";
   }
-  if (/row-level security/i.test(message)) {
-    return "This account is not allowed to change the catalogue. Check the RLS policies.";
-  }
-  if (/row level security/i.test(message)) {
+  if (/row-level security|row level security/i.test(message)) {
     return "This account is not allowed to change the catalogue. Check the RLS policies.";
   }
   if (/bucket not found/i.test(message)) {

@@ -355,12 +355,19 @@ export function createSupabaseStub({ email = "owner@creewrld.test", password = "
         body = null;
       }
 
+      const incoming = request.headers() || {};
       state.calls.push({
         method,
         path: url.pathname,
         query: url.search,
         body,
-        signedIn: state.signedIn
+        signedIn: state.signedIn,
+        // `apikey` is what PostgREST looks for first; `authorization` is what
+        // storage and realtime use. Both are recorded so the suite can prove
+        // every request left the browser with credentials attached.
+        headers: incoming,
+        apikey: incoming.apikey || url.searchParams.get("apikey") || "",
+        authorization: incoming.authorization || ""
       });
 
       if (state.offline) {

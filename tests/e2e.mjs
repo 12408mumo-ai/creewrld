@@ -1255,6 +1255,32 @@ async function run() {
       stub.calls().every((call) => !call.path.startsWith("/rest/v1/_")),
       stub.calls().map((c) => c.path).join(", ")
     );
+
+    // The whole point of the centralized client: PostgREST rejects a request
+    // with no `apikey` header ("No API key found in request"), so no call may
+    // ever leave without one — catalogue reads, studio writes, uploads, orders.
+    const allCalls = stub.calls();
+    const callsWithoutKey = allCalls.filter((call) => !call.apikey);
+    ok(
+      "every backend call carries an apikey header",
+      allCalls.length > 0 && callsWithoutKey.length === 0,
+      callsWithoutKey.slice(0, 5).map((c) => c.method + " " + c.path).join(" | ")
+    );
+    ok(
+      "the apikey is the configured anon key everywhere",
+      allCalls.every((call) => call.apikey === STUB_ANON_KEY),
+      Array.from(new Set(allCalls.map((c) => String(c.apikey).slice(0, 12)))).join(" | ")
+    );
+    ok(
+      "each call also bears the bearer token",
+      allCalls.every((call) => call.authorization === "Bearer " + STUB_ANON_KEY),
+      Array.from(new Set(allCalls.map((c) => String(c.authorization).slice(0, 18)))).join(" | ")
+    );
+    ok(
+      "the client reports where its credentials came from",
+      (await clean.page.evaluate(() => window.creewrldConfig?.().configured)) === true,
+      await clean.page.evaluate(() => JSON.stringify(window.creewrldConfig?.() || null))
+    );
     await clean.page.close();
 
     await browser.close();
