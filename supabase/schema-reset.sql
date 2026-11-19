@@ -123,30 +123,34 @@ comment on column public.products.price is 'Whole Kenyan shillings; the storefro
 -- -------------------------------------------------------------------- orders
 -- One row per WhatsApp checkout, written before the chat is opened.
 create table public.orders (
-  id              uuid          primary key default gen_random_uuid(),
-  customer_name   text          not null check (char_length(trim(customer_name)) >= 1),
-  customer_phone  text          not null check (char_length(trim(customer_phone)) >= 1),
-  delivery_area   text          not null check (char_length(trim(delivery_area)) >= 1),
-  items           jsonb         not null default '[]'::jsonb
-                  check (jsonb_typeof(items) = 'array'),
-  total_price     numeric(12,2) not null default 0 check (total_price >= 0),
-  status          text          not null default 'pending'
-                  check (status in ('pending', 'new', 'contacted', 'paid', 'dispatched', 'cancelled')),
-  created_at      timestamptz   not null default now(),
+  id                uuid          primary key default gen_random_uuid(),
+  customer_name     text          not null check (char_length(trim(customer_name)) between 2 and 200),
+  customer_phone    text          not null check (char_length(trim(customer_phone)) between 7 and 25),
+  delivery_area     text          not null check (char_length(trim(delivery_area)) between 2 and 500),
+  items             jsonb         not null default '[]'::jsonb
+                    check (jsonb_typeof(items) = 'array' and octet_length(items::text) <= 50000),
+  total_price       numeric(12,2) not null default 0 check (total_price >= 0),
+  status            text          not null default 'pending'
+                    check (status in ('pending', 'new', 'contacted', 'paid', 'dispatched', 'cancelled')),
+  created_at        timestamptz   not null default now(),
 
   -- how the storefront splits the money and where it is going
-  zone            text          not null default '',
-  zone_label      text          not null default '',
-  zone_fee        integer       not null default 0,
-  subtotal        integer       not null default 0,
-  item_count      integer       not null default 0,
-  source          text          not null default 'product'
+  zone              text          not null default ''
+                    check (zone in ('nairobi-core', 'nairobi-outer', 'nationwide', '')),
+  zone_label        text          not null default '' check (char_length(zone_label) <= 200),
+  zone_fee          integer       not null default 0 check (zone_fee >= 0),
+  subtotal          integer       not null default 0 check (subtotal >= 0),
+  item_count        integer       not null default 0 check (item_count between 0 and 999),
+  source            text          not null default 'product'
+                    check (source in ('product', 'cart', 'cart-item')),
+  client_request_id uuid
 );
 
 comment on table public.orders is 'Checkout records. Readable in the Supabase table editor only — the browser cannot select them.';
 comment on column public.orders.status is 'pending by default; the storefront writes new. Move it along by hand in the table editor.';
 comment on column public.orders.total_price is 'Grand total in KSh: subtotal + zone_fee.';
 comment on column public.orders.items is 'Snapshot of the basket: [{ product_id, title, size, qty, price, line_total, condition, image_url }].';
+comment on column public.orders.client_request_id is 'Per-checkout idempotency UUID so a timeout-then-retry never writes a second row.';
 
 -- ------------------------------------------------------------------- indexes
 create index products_created_at_idx  on public.products (created_at desc);
@@ -154,6 +158,8 @@ create index products_category_id_idx on public.products (category_id);
 create index products_in_stock_idx    on public.products (in_stock);
 create index orders_created_at_idx    on public.orders   (created_at desc);
 create index orders_status_idx        on public.orders   (status);
+create unique index orders_client_request_id_uidx
+  on public.orders (client_request_id) where client_request_id is not null;
 
 -- ------------------------------------------------------------ updated_at
 -- Keep `updated_at` honest without trusting whoever sent the write.
@@ -244,7 +250,14 @@ drop policy if exists "Allow public order placement" on public.orders;
 create policy "Allow public order placement"
   on public.orders for insert
   to anon, authenticated
-  with check (true);
+  with check (
+    status in ('pending', 'new')
+    and jsonb_typeof(items) = 'array'
+    and jsonb_array_length(items) between 1 and 50
+    and total_price >= 0
+    and subtotal >= 0
+    and zone_fee >= 0
+  );
 
 
 -- ============================================================ 6. image bucket

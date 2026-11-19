@@ -18,9 +18,8 @@
 --                       policy from the old in-browser studio
 --    grants             anon needs SELECT on categories, SELECT on products,
 --                       INSERT on orders — and nothing else
---    bucket             public = true, 6291456 bytes, four image types — a
---                       missing bucket is the 400 on image upload
---    storage policies   four rows for product-images
+--    bucket             public = true, 6291456 bytes, four image types
+--    storage policies   one row for product-images (public SELECT only)
 -- ============================================================================
 
 
@@ -98,7 +97,8 @@ select policyname, cmd, roles::text as roles, coalesce(qual, with_check) as expr
    and (coalesce(qual, '') like '%product-images%' or coalesce(with_check, '') like '%product-images%')
  order by cmd, policyname;
 
--- Expect four: public SELECT, and INSERT / UPDATE / DELETE for anon+authenticated.
+-- Expect one: public SELECT. Catalogue photography is uploaded from the
+-- Supabase Dashboard (service role), so the browser holds no write policies.
 
 
 -- ------------------------------------------------------- 7. category seed data

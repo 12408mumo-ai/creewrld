@@ -40,5 +40,11 @@ export function resolveImage(src) {
   const filename = value.split("?")[0].split("#")[0].split("/").pop();
   if (byFilename.has(filename)) return byFilename.get(filename);
 
-  return value;
+  // Only HTTPS URLs and safe relative paths may reach <img src>: blocks
+  // javascript:, data: (other than our own placeholder above), file:, and
+  // plaintext http: mixed content if a row in `products` holds a bad URL.
+  if (/^https:\/\//i.test(value)) return value;
+  if (/^(\.\/|\/(?!\/)|assets\/)/i.test(value)) return value;
+
+  return PLACEHOLDER;
 }

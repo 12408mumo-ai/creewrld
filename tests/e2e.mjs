@@ -244,15 +244,20 @@ const fill = (page, selector, value) =>
   );
 
 async function axeViolations(page) {
-  await page.addScriptTag({ content: fs.readFileSync(require.resolve("axe-core/axe.min.js"), "utf8") });
-  return page.evaluate(async () => {
-    const result = await window.axe.run(document, { resultTypes: ["violations"] });
-    return result.violations.map((violation) => ({
-      id: violation.id,
-      impact: violation.impact,
-      nodes: violation.nodes.slice(0, 3).map((node) => node.html.slice(0, 120))
-    }));
-  });
+  await page.setBypassCSP(true);
+  try {
+    await page.addScriptTag({ content: fs.readFileSync(require.resolve("axe-core/axe.min.js"), "utf8") });
+    return await page.evaluate(async () => {
+      const result = await window.axe.run(document, { resultTypes: ["violations"] });
+      return result.violations.map((violation) => ({
+        id: violation.id,
+        impact: violation.impact,
+        nodes: violation.nodes.slice(0, 3).map((node) => node.html.slice(0, 120))
+      }));
+    });
+  } finally {
+    await page.setBypassCSP(false);
+  }
 }
 
 /* -------------------------------------------------------------------- suite */
@@ -461,8 +466,13 @@ async function run() {
     ok(
       "the order insert writes the documented columns",
       Boolean(orderBody) &&
-        ["customer_name", "customer_phone", "delivery_area", "items", "total_price", "status"].every((key) => key in orderBody),
+        ["customer_name", "customer_phone", "delivery_area", "items", "total_price", "status", "client_request_id"].every((key) => key in orderBody),
       JSON.stringify(orderBody && Object.keys(orderBody))
+    );
+    ok(
+      "the order insert carries an idempotency UUID",
+      Boolean(orderBody) && typeof orderBody.client_request_id === "string" && orderBody.client_request_id.length >= 10,
+      orderBody && orderBody.client_request_id
     );
     ok(
       "the order insert asks for nothing back",
