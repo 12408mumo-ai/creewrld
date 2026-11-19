@@ -7,7 +7,7 @@
  * the list is read in the Supabase table editor rather than on the storefront.
  */
 
-import { assertConfigured, describeError } from "../lib/supabase.js";
+import { assertConfigured, describeError, withTimeout } from "../lib/supabase.js";
 
 const lineFor = (item) => ({
   product_id: item.product.id,
@@ -21,7 +21,7 @@ const lineFor = (item) => ({
 });
 
 /**
- * @param {object} draft  { items: [{ product, size, qty }], customer, zone, source }
+ * @param {object} draft  { items: [{ product, size, qty }], customer, zone, source, idempotencyKey }
  * @param {object} totals { subtotal, fee, total, zone }
  */
 export async function insertOrder(draft, totals) {
@@ -42,11 +42,53 @@ export async function insertOrder(draft, totals) {
     status: "new"
   };
 
+  // Idempotency: the caller mints one key per checkout attempt. A retry after
+  // a timeout, a double submit, or a network replay hits the unique index on
+  // `client_request_id` instead of writing a second row. Older projects that
+  // have not run the latest schema.sql have no such column — PostgREST would
+  // reject an unknown column, so only send the key when the caller has one
+  // and let the unique-violation path below absorb the duplicate.
+  if (draft.idempotencyKey) {
+    payload.client_request_id = draft.idempotencyKey;
+  }
+
+  const send = (row) =>
+    withTimeout(
+      client.from("orders").insert([row]),
+      15000,
+      "Order logging timed out — the WhatsApp chat still has your order."
+    );
+
   // No `.select()` on purpose: the browser holds no read grant on `orders`
   // (a row carries a customer's name and phone number), and asking for the
   // row back would need one. A plain insert is all the studio needs.
-  const { error } = await client.from("orders").insert([payload]);
+  //
+  // Bounded by withTimeout like the catalogue read: without it a hung request
+  // leaves the checkout on "Logging order…" forever and the WhatsApp tab is
+  // never navigated.
+  let { error } = await send(payload);
 
-  if (error) throw new Error(describeError(error, "Couldn't log the order."));
+  // Backwards compatibility: if the deployed Supabase database has not re-run
+  // supabase/schema.sql yet, PostgREST rejects `client_request_id` (PGRST204 /
+  // 42703). Retry once without that column so orders keep landing during rollout.
+  if (
+    error &&
+    payload.client_request_id &&
+    /client_request_id/i.test(String(error.message || error.details || ""))
+  ) {
+    const { client_request_id: _omitted, ...legacyPayload } = payload;
+    ({ error } = await send(legacyPayload));
+  }
+
+  if (error) {
+    // 23505 = unique_violation on client_request_id: this exact checkout was
+    // already logged (e.g. the first attempt timed out client-side but landed
+    // server-side). Treat it as success so the shopper is not asked to pay
+    // twice or send a duplicate chat.
+    if (error.code === "23505" || /duplicate key|unique constraint/i.test(error.message || "")) {
+      return true;
+    }
+    throw new Error(describeError(error, "Couldn't log the order."));
+  }
   return true;
 }

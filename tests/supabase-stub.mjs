@@ -184,6 +184,21 @@ export function createSupabaseStub() {
     if (table === "orders") {
       if (method === "POST") {
         const batch = Array.isArray(body) ? body : [body];
+        for (const row of batch) {
+          if (
+            row &&
+            row.client_request_id &&
+            state.orders.some((existing) => existing.client_request_id === row.client_request_id)
+          ) {
+            return json(
+              {
+                code: "23505",
+                message: 'duplicate key value violates unique constraint "orders_client_request_id_uidx"'
+              },
+              409
+            );
+          }
+        }
         const created = batch.map((row) => ({
           id: uuid(),
           created_at: new Date().toISOString(),

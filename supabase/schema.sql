@@ -146,22 +146,34 @@ create trigger products_touch_updated_at
 
 
 -- --------------------------------------------------------------------- orders
+-- The browser holds only INSERT on this table, so the CHECKs below are the
+-- server-side validation: without them anyone with the public anon key could
+-- insert empty names, negative totals, unknown zones or megabyte-sized
+-- `items` payloads. Length caps keep the table from becoming a blob store.
 create table if not exists public.orders (
   id                uuid primary key default gen_random_uuid(),
   created_at        timestamptz not null default now(),
-  customer_name     text not null,
-  customer_phone    text not null,
-  delivery_area     text not null,
-  zone              text not null,
-  zone_label        text not null default '',
-  zone_fee          integer not null default 0,
-  subtotal          integer not null default 0,
-  total_price       numeric(12,2) not null default 0,
-  item_count        integer not null default 0,
-  items             jsonb not null default '[]'::jsonb,
-  source            text not null default 'product',
+  customer_name     text not null
+                    check (char_length(trim(customer_name)) between 2 and 200),
+  customer_phone    text not null
+                    check (char_length(trim(customer_phone)) between 7 and 25),
+  delivery_area     text not null
+                    check (char_length(trim(delivery_area)) between 2 and 500),
+  zone              text not null
+                    check (zone in ('nairobi-core','nairobi-outer','nationwide','')),
+  zone_label        text not null default ''
+                    check (char_length(zone_label) <= 200),
+  zone_fee          integer not null default 0 check (zone_fee >= 0),
+  subtotal          integer not null default 0 check (subtotal >= 0),
+  total_price       numeric(12,2) not null default 0 check (total_price >= 0),
+  item_count        integer not null default 0 check (item_count between 0 and 999),
+  items             jsonb not null default '[]'::jsonb
+                    check (jsonb_typeof(items) = 'array' and octet_length(items::text) <= 50000),
+  source            text not null default 'product'
+                    check (source in ('product','cart','cart-item')),
   status            text not null default 'pending'
-                    check (status in ('pending','new','contacted','paid','dispatched','cancelled'))
+                    check (status in ('pending','new','contacted','paid','dispatched','cancelled')),
+  client_request_id uuid
 );
 
 alter table public.orders add column if not exists id                uuid        default gen_random_uuid();
@@ -177,7 +189,48 @@ alter table public.orders add column if not exists total_price       numeric(12,
 alter table public.orders add column if not exists item_count        integer     not null default 0;
 alter table public.orders add column if not exists items             jsonb       not null default '[]'::jsonb;
 alter table public.orders add column if not exists source            text        not null default 'product';
-alter table public.orders add column if not exists status            text        not null default 'new';
+alter table public.orders add column if not exists status            text        not null default 'pending';
+alter table public.orders add column if not exists client_request_id uuid;
+
+-- Idempotency: one row per checkout attempt. The storefront mints a UUID per
+-- modal open and retries reuse it, so a timeout-then-retry cannot double-log.
+create unique index if not exists orders_client_request_id_uidx
+  on public.orders (client_request_id) where client_request_id is not null;
+
+-- Backfill the CHECKs onto a table created by an older script. NOT VALID
+-- enforces them for new rows without failing on legacy junk already stored.
+do $orders_checks$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'orders_customer_name_len') then
+    alter table public.orders add constraint orders_customer_name_len
+      check (char_length(trim(customer_name)) between 2 and 200) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'orders_customer_phone_len') then
+    alter table public.orders add constraint orders_customer_phone_len
+      check (char_length(trim(customer_phone)) between 7 and 25) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'orders_delivery_area_len') then
+    alter table public.orders add constraint orders_delivery_area_len
+      check (char_length(trim(delivery_area)) between 2 and 500) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'orders_zone_known') then
+    alter table public.orders add constraint orders_zone_known
+      check (zone in ('nairobi-core','nairobi-outer','nationwide','')) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'orders_money_non_negative') then
+    alter table public.orders add constraint orders_money_non_negative
+      check (zone_fee >= 0 and subtotal >= 0 and total_price >= 0) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'orders_items_bounded') then
+    alter table public.orders add constraint orders_items_bounded
+      check (jsonb_typeof(items) = 'array' and octet_length(items::text) <= 50000) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'orders_source_known') then
+    alter table public.orders add constraint orders_source_known
+      check (source in ('product','cart','cart-item')) not valid;
+  end if;
+end
+$orders_checks$;
 
 -- Same story for the order columns: carry the old names across once so the
 -- table editor reads sensibly after the rename.
@@ -251,6 +304,8 @@ create policy "products are public"
 
 -- Shoppers may create an order and never read the list back. Orders are read in
 -- the Supabase Dashboard (Table Editor), which is not subject to these policies.
+-- The policy check mirrors the storefront's write contract so a direct PostgREST
+-- call cannot pre-mark an order `paid` or omit line items.
 drop policy if exists "anyone can place an order" on public.orders;
 drop policy if exists "orders readable by staff"  on public.orders;
 drop policy if exists "orders updatable by staff" on public.orders;
@@ -258,7 +313,14 @@ drop policy if exists "orders deletable by staff" on public.orders;
 create policy "anyone can place an order"
   on public.orders for insert
   to anon, authenticated
-  with check (true);
+  with check (
+    status in ('pending', 'new')
+    and jsonb_typeof(items) = 'array'
+    and jsonb_array_length(items) between 1 and 50
+    and total_price >= 0
+    and subtotal >= 0
+    and zone_fee >= 0
+  );
 
 
 -- ------------------------------------------------------------------- realtime

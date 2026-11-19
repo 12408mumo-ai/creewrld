@@ -20,6 +20,7 @@ const form = () => $("#orderForm");
 const successPanel = () => $("#orderSuccess");
 
 let draft = null;
+let submitting = false;
 
 const draftItems = (items) =>
   items.map((item) => ({
@@ -32,7 +33,14 @@ const draftItems = (items) =>
 export function openOrder(items, source = "product") {
   if (!items || !items.length) return;
 
-  draft = { source, items: draftItems(items), zone: state.zone };
+  // One idempotency key per checkout attempt: a retry after a timeout or a
+  // double submit reuses it, so the database logs the order once.
+  const idempotencyKey =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : "cw-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+
+  draft = { source, items: draftItems(items), zone: state.zone, idempotencyKey };
 
   renderSummary();
   clearErrors();
@@ -139,7 +147,8 @@ function showErrors(errors) {
 
 async function submitOrder(event) {
   event.preventDefault();
-  if (!draft) return;
+  if (!draft || submitting) return;
+  submitting = true;
 
   const data = new FormData(form());
   const customer = {
@@ -194,11 +203,15 @@ async function submitOrder(event) {
   }
   let logged = false;
   try {
-    await insertOrder({ items, customer, source: draft.source }, totals);
+    await insertOrder(
+      { items, customer, source: draft.source, idempotencyKey: draft.idempotencyKey },
+      totals
+    );
     logged = true;
   } catch (error) {
     console.warn("[creewrld] order not logged", error);
   } finally {
+    submitting = false;
     if (submit) {
       submit.disabled = false;
       submit.textContent = submit.dataset.label || "Order";
